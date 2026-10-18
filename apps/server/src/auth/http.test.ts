@@ -167,7 +167,13 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-const sessionCookieFixture = (renewal: "after-throttle" | "within-throttle") =>
+type SessionCheck = {
+  readonly via?: "cookie" | "bearer";
+  readonly advance?: Duration.Duration;
+  readonly renewViaClients?: boolean;
+};
+
+const sessionCheck = (check: SessionCheck) =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const testClock = yield* Clock.Clock;
@@ -187,37 +193,54 @@ const sessionCookieFixture = (renewal: "after-throttle" | "within-throttle") =>
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (environment) =>
         Effect.gen(function* () {
-          const devResponse = yield* Effect.promise(() =>
-            environment.handler(
-              postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
-              requestContext,
-            ),
+          const run = (request: Request) =>
+            Effect.promise(() => environment.handler(request, requestContext));
+          const devResponse = yield* run(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
           );
           const devCookie = (
             devResponse.headers.getSetCookie().find((c) => c.startsWith("t3_dev_session_")) ?? ""
           ).split(";", 1)[0]!;
-          const pairing = yield* Effect.promise(async () => {
-            const response = await environment.handler(
-              postJson("/api/auth/pairing-token", {}, { cookie: devCookie }),
-              requestContext,
+          const pairCredential = () =>
+            run(postJson("/api/auth/pairing-token", {}, { cookie: devCookie })).pipe(
+              Effect.flatMap((response) =>
+                Effect.promise(() => response.json() as Promise<{ credential: string }>),
+              ),
             );
-            return (await response.json()) as { credential: string };
-          });
-          const issued = yield* Effect.promise(() =>
-            environment.handler(
-              postJson("/api/auth/browser-session", { credential: pairing.credential }),
-              requestContext,
-            ),
+          const issued = yield* run(
+            postJson("/api/auth/browser-session", {
+              credential: (yield* pairCredential()).credential,
+            }),
           );
           const cookie = issued.headers.getSetCookie()[0]!.split(";", 1)[0]!;
-          yield* TestClock.adjust(
-            renewal === "after-throttle" ? Duration.days(2) : Duration.hours(1),
+          const bearerResponse = yield* run(
+            new Request("http://127.0.0.1/oauth/token", {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: AuthTokenExchangeGrantType,
+                subject_token: (yield* pairCredential()).credential,
+                subject_token_type: AuthEnvironmentBootstrapTokenType,
+                requested_token_type: AuthAccessTokenType,
+              }),
+            }),
           );
-          const response = yield* Effect.promise(() =>
-            environment.handler(
-              new Request("http://127.0.0.1/api/auth/session", { headers: { cookie } }),
-              requestContext,
-            ),
+          const bearer = (
+            (yield* Effect.promise(() => bearerResponse.json())) as {
+              access_token: string;
+            }
+          ).access_token;
+          yield* TestClock.adjust(check.advance ?? Duration.hours(1));
+          if (check.renewViaClients) {
+            const renewed = yield* run(
+              new Request("http://127.0.0.1/api/auth/clients", { headers: { cookie } }),
+            );
+            expect(renewed.status).toBe(200);
+            expect(renewed.headers.getSetCookie()).toHaveLength(0);
+          }
+          const response = yield* run(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: check.via === "bearer" ? { authorization: `Bearer ${bearer}` } : { cookie },
+            }),
           );
           return { response, cookie, nowMs: yield* testClock.currentTimeMillis };
         }),
@@ -225,25 +248,57 @@ const sessionCookieFixture = (renewal: "after-throttle" | "within-throttle") =>
     );
   }).pipe(Effect.provide(NodeServices.layer));
 
+const expectCookieExpiry = (response: Response, cookie: string, nowMs: number) => {
+  const setCookie = response.headers.getSetCookie();
+  expect(setCookie).toHaveLength(1);
+  expect(setCookie[0]).toContain(`${cookie};`);
+  expect(setCookie[0]).toContain("HttpOnly");
+  const expires = /Expires=([^;]+)/i.exec(setCookie[0]!)?.[1];
+  expect(
+    Math.abs(Date.parse(expires!) - (nowMs + Duration.toMillis(Duration.days(90)))),
+  ).toBeLessThanOrEqual(1000);
+};
+
 it.effect("re-sends the session cookie with the renewed expiry", () =>
   Effect.gen(function* () {
-    const { response, cookie, nowMs } = yield* sessionCookieFixture("after-throttle");
+    const { response, cookie, nowMs } = yield* sessionCheck({ advance: Duration.days(2) });
+    expect(response.status).toBe(200);
+    expectCookieExpiry(response, cookie, nowMs);
+  }),
+);
+
+it.effect("re-sends the cookie when another request already renewed the row", () =>
+  Effect.gen(function* () {
+    const { response, cookie, nowMs } = yield* sessionCheck({
+      advance: Duration.days(2),
+      renewViaClients: true,
+    });
+    expect(response.status).toBe(200);
+    expectCookieExpiry(response, cookie, nowMs);
+  }),
+);
+
+it.effect("re-sends the current expiry for a renewable cookie session without renewal", () =>
+  Effect.gen(function* () {
+    const { response, cookie, nowMs } = yield* sessionCheck({ advance: Duration.hours(1) });
     expect(response.status).toBe(200);
     const setCookie = response.headers.getSetCookie();
     expect(setCookie).toHaveLength(1);
     expect(setCookie[0]).toContain(`${cookie};`);
-    expect(setCookie[0]).toContain("HttpOnly");
     const expires = /Expires=([^;]+)/i.exec(setCookie[0]!)?.[1];
+    // Issued at t=0 with a 90-day idle period; one hour later it is not renewed.
     expect(
-      Math.abs(Date.parse(expires!) - (nowMs + Duration.toMillis(Duration.days(90)))),
+      Math.abs(Date.parse(expires!) - Duration.toMillis(Duration.days(90))),
     ).toBeLessThanOrEqual(1000);
+    expect(nowMs).toBe(Duration.toMillis(Duration.hours(1)));
   }),
 );
 
-it.effect("does not set a cookie when nothing was renewed", () =>
+it.effect("does not set a cookie for a bearer credential", () =>
   Effect.gen(function* () {
-    const { response } = yield* sessionCookieFixture("within-throttle");
+    const { response } = yield* sessionCheck({ via: "bearer", advance: Duration.days(2) });
     expect(response.status).toBe(200);
+    expect(yield* Effect.promise(() => response.json())).toMatchObject({ authenticated: true });
     expect(response.headers.getSetCookie()).toHaveLength(0);
   }),
 );

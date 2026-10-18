@@ -271,7 +271,7 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            const { renewedExpiresAt, ...result } = yield* serverAuth.getSessionState(request);
+            const { renewable, ...result } = yield* serverAuth.getSessionState(request);
             const credential = EnvironmentAuth.selectRequestCredential(
               request,
               sessions.cookieName,
@@ -288,11 +288,14 @@ export const layer = HttpApiBuilder.group(
             } else if (
               credential &&
               EnvironmentAuth.isBrowserCookieCredential(credential.source) &&
-              renewedExpiresAt
+              result.authenticated &&
+              renewable &&
+              result.expiresAt
             ) {
-              // The browser drops the cookie at its own expiry, so a row extended
-              // server-side must be re-sent with the new date.
-              yield* appendSessionCookie(sessions.cookieName, credential.token, renewedExpiresAt);
+              // Any authenticated request can extend the row, but the browser only
+              // learns the new date here; re-send every time so the cookie never
+              // expires before its live row.
+              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
               yield* appendCredentialResponseHeaders;
             }
             return result;
