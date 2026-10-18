@@ -10,7 +10,9 @@ import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
   AuthSessionId,
+  AuthSessionKind,
   ClientSurface,
+  RuntimeMode,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 
@@ -41,6 +43,9 @@ export const AuthSessionRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  renewable: Schema.Boolean,
+  kind: AuthSessionKind,
+  runtimeModeCeiling: Schema.NullOr(RuntimeMode),
 });
 export type AuthSessionRecord = typeof AuthSessionRecord.Type;
 
@@ -52,6 +57,9 @@ export const CreateAuthSessionInput = Schema.Struct({
   client: AuthSessionClientMetadataRecord,
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
+  renewable: Schema.Boolean,
+  kind: AuthSessionKind,
+  runtimeModeCeiling: Schema.NullOr(RuntimeMode),
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 
@@ -99,6 +107,12 @@ export const SetAuthSessionClientConnectionInput = Schema.Struct({
 });
 export type SetAuthSessionClientConnectionInput = typeof SetAuthSessionClientConnectionInput.Type;
 
+export const SetAuthSessionExpiresAtInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  expiresAt: Schema.DateTimeUtcFromString,
+});
+export type SetAuthSessionExpiresAtInput = typeof SetAuthSessionExpiresAtInput.Type;
+
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -129,6 +143,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly setClientConnection: (
       input: SetAuthSessionClientConnectionInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    readonly setExpiresAt: (
+      input: SetAuthSessionExpiresAtInput,
+    ) => Effect.Effect<void, AuthSessionRepositoryError>;
   }
 >()("t3/persistence/AuthSessions/AuthSessionRepository") {}
 
@@ -147,6 +164,9 @@ const AuthSessionDbRow = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  renewable: Schema.Number,
+  kind: AuthSessionKind,
+  runtimeModeCeiling: Schema.NullOr(RuntimeMode),
 });
 
 const AuthSessionRawDbRow = Schema.Struct({
@@ -164,6 +184,9 @@ const AuthSessionRawDbRow = Schema.Struct({
   expiresAt: Schema.Unknown,
   lastConnectedAt: Schema.Unknown,
   revokedAt: Schema.Unknown,
+  renewable: Schema.Unknown,
+  kind: Schema.Unknown,
+  runtimeModeCeiling: Schema.Unknown,
 });
 
 const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
@@ -186,6 +209,9 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
     expiresAt: row.expiresAt,
     lastConnectedAt: row.lastConnectedAt,
     revokedAt: row.revokedAt,
+    renewable: row.renewable !== 0,
+    kind: row.kind,
+    runtimeModeCeiling: row.runtimeModeCeiling,
   };
 }
 
@@ -226,7 +252,10 @@ export const make = Effect.gen(function* () {
           client_browser,
           issued_at,
           expires_at,
-          revoked_at
+          revoked_at,
+          renewable,
+          kind,
+          runtime_mode_ceiling
         )
         VALUES (
           ${input.sessionId},
@@ -241,7 +270,10 @@ export const make = Effect.gen(function* () {
           ${input.client.browser},
           ${input.issuedAt},
           ${input.expiresAt},
-          NULL
+          NULL,
+          ${input.renewable ? 1 : 0},
+          ${input.kind},
+          ${input.runtimeModeCeiling}
         )
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
@@ -268,7 +300,10 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          renewable AS "renewable",
+          kind AS "kind",
+          runtime_mode_ceiling AS "runtimeModeCeiling"
         FROM auth_sessions
         WHERE session_id = ${sessionId}
       `,
@@ -312,7 +347,10 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          renewable AS "renewable",
+          kind AS "kind",
+          runtime_mode_ceiling AS "runtimeModeCeiling"
         FROM auth_sessions
         WHERE revoked_at IS NULL
           AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
@@ -338,6 +376,17 @@ export const make = Effect.gen(function* () {
         UPDATE auth_sessions
         SET client_surface = COALESCE(${surface}, client_surface),
             client_app_version = COALESCE(${appVersion}, client_app_version)
+        WHERE session_id = ${sessionId}
+          AND revoked_at IS NULL
+      `,
+  });
+
+  const setExpiresAtRow = SqlSchema.void({
+    Request: SetAuthSessionExpiresAtInput,
+    execute: ({ sessionId, expiresAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET expires_at = ${expiresAt}
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
       `,
@@ -511,6 +560,17 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const setExpiresAt: AuthSessionRepository["Service"]["setExpiresAt"] = (input) =>
+    setExpiresAtRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.setExpiresAt:query",
+          "AuthSessionRepository.setExpiresAt:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+    );
+
   return {
     create,
     createReplacingActive,
@@ -521,6 +581,7 @@ export const make = Effect.gen(function* () {
     revokeAllExcept,
     setLastConnectedAt,
     setClientConnection,
+    setExpiresAt,
   } satisfies AuthSessionRepository["Service"];
 });
 

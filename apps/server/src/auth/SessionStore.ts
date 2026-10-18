@@ -519,6 +519,9 @@ export const make = Effect.gen(function* () {
         },
         issuedAt: yield* DateTime.now,
         expiresAt: REUSABLE_DEV_SESSION_EXPIRES_AT,
+        renewable: false,
+        kind: "session",
+        runtimeModeCeiling: null,
       })
       .pipe(
         Effect.mapError(
@@ -704,6 +707,9 @@ export const make = Effect.gen(function* () {
         },
         issuedAt,
         expiresAt,
+        renewable: false,
+        kind: "session",
+        runtimeModeCeiling: claims.rtc ?? null,
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
         input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod

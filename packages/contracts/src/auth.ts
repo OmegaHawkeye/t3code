@@ -27,6 +27,9 @@ export const ServerAuthSessionMethod = Schema.Literals([
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
+export const AuthSessionKind = Schema.Literals(["session", "oauth-grant", "long-lived-token"]);
+export type AuthSessionKind = typeof AuthSessionKind.Type;
+
 export const AuthOrchestrationReadScope = "orchestration:read" as const;
 export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
 export const AuthSettingsWriteScope = "settings:write" as const;
