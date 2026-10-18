@@ -5,6 +5,7 @@ import {
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
+  type AuthSessionKind,
   type ClientSurface,
   RuntimeMode,
   type ServerAuthSessionMethod,
@@ -25,6 +26,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import * as SessionLifetime from "./SessionLifetime.ts";
 import {
   REUSABLE_DEV_SESSION_EXPIRES_AT,
   REUSABLE_DEV_SESSION_PREFIX,
@@ -59,6 +61,9 @@ export interface VerifiedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly runtimeModeCeiling?: RuntimeMode;
+  readonly renewable: boolean;
+  readonly kind: AuthSessionKind;
+  readonly renewedExpiresAt?: DateTime.Utc;
 }
 
 export type SessionCredentialChange =
@@ -378,8 +383,19 @@ export class SessionStore extends Context.Service<
       readonly runtimeModeCeiling?: RuntimeMode;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
+      readonly renewable?: boolean;
+      readonly kind?: AuthSessionKind;
+      /** Row lifetime when it differs from the token's `ttl`. */
+      readonly sessionTtl?: Duration.Duration;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
+    readonly issueAccessToken: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly ttl: Duration.Duration;
+    }) => Effect.Effect<
+      { readonly token: string; readonly expiresAt: DateTime.Utc },
+      SessionCredentialInternalError
+    >;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
       input?: {
@@ -424,6 +440,8 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+// Renewal writes at most once per day so a busy client doesn't write on every request.
+const RENEWAL_THROTTLE = Duration.days(1);
 
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
@@ -488,6 +506,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const authSessions = yield* AuthSessions.AuthSessionRepository;
+  const sessionLifetime = yield* SessionLifetime.SessionLifetime;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
@@ -652,6 +671,25 @@ export const make = Effect.gen(function* () {
     );
 
   const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
+  const signClaims = (claims: SessionClaims) =>
+    encodeClaims(claims).pipe(
+      Effect.map(base64UrlEncode),
+      Effect.map(
+        (encodedPayload) => `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`,
+      ),
+      Effect.mapError(
+        (cause) =>
+          new SessionCredentialIssueError({
+            sessionId: claims.sid,
+            cause: new SessionClaimsEncodingError({
+              sessionId: claims.sid,
+              operation: "encode_session_claims",
+              cause,
+            }),
+          }),
+      ),
+    );
+
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
     function* (input) {
       const sessionId = AuthSessionId.make(
@@ -660,9 +698,14 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause }))),
       );
       const issuedAt = yield* DateTime.now;
-      const expiresAt = DateTime.add(issuedAt, {
-        milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),
-      });
+      const renewable = input?.renewable ?? false;
+      const ttl =
+        input?.ttl ?? (renewable ? yield* sessionLifetime.idlePeriod : DEFAULT_SESSION_TTL);
+      const expiresAt = DateTime.add(issuedAt, { milliseconds: Duration.toMillis(ttl) });
+      const sessionExpiresAt =
+        input?.sessionTtl === undefined
+          ? expiresAt
+          : DateTime.add(issuedAt, { milliseconds: Duration.toMillis(input.sessionTtl) });
       const claims: SessionClaims = {
         v: 1,
         kind: "session",
@@ -676,21 +719,7 @@ export const make = Effect.gen(function* () {
         exp: expiresAt.epochMilliseconds,
       };
 
-      const encodedPayload = yield* encodeClaims(claims).pipe(
-        Effect.map(base64UrlEncode),
-        Effect.mapError(
-          (cause) =>
-            new SessionCredentialIssueError({
-              sessionId,
-              cause: new SessionClaimsEncodingError({
-                sessionId,
-                operation: "encode_session_claims",
-                cause,
-              }),
-            }),
-        ),
-      );
-      const signature = signPayload(encodedPayload, signingSecret);
+      const token = yield* signClaims(claims);
       const client = input?.client ?? createDefaultClientMetadata();
       const sessionRecord = {
         sessionId,
@@ -706,9 +735,9 @@ export const make = Effect.gen(function* () {
           browser: client.browser ?? null,
         },
         issuedAt,
-        expiresAt,
-        renewable: false,
-        kind: "session",
+        expiresAt: sessionExpiresAt,
+        renewable,
+        kind: input?.kind ?? "session",
         runtimeModeCeiling: claims.rtc ?? null,
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
@@ -743,7 +772,7 @@ export const make = Effect.gen(function* () {
           method: claims.method,
           client,
           issuedAt,
-          expiresAt,
+          expiresAt: sessionExpiresAt,
           lastConnectedAt: null,
           connected: false,
         }),
@@ -751,7 +780,7 @@ export const make = Effect.gen(function* () {
 
       return {
         sessionId,
-        token: `${encodedPayload}.${signature}`,
+        token,
         method: claims.method,
         client,
         expiresAt: expiresAt,
@@ -760,6 +789,58 @@ export const make = Effect.gen(function* () {
       } satisfies IssuedSession;
     },
   );
+
+  // A failed renewal must not fail the request it rides on; the row keeps its old expiry.
+  const renewIfDue = (
+    sessionId: AuthSessionId,
+    currentExpiresAt: DateTime.Utc,
+    now: DateTime.Utc,
+  ): Effect.Effect<DateTime.Utc | undefined> =>
+    Effect.gen(function* () {
+      const idlePeriod = yield* sessionLifetime.idlePeriod;
+      const remaining = currentExpiresAt.epochMilliseconds - now.epochMilliseconds;
+      if (remaining >= Duration.toMillis(idlePeriod) - Duration.toMillis(RENEWAL_THROTTLE)) {
+        return undefined;
+      }
+      const renewedExpiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(idlePeriod) });
+      return yield* authSessions.setExpiresAt({ sessionId, expiresAt: renewedExpiresAt }).pipe(
+        Effect.as(renewedExpiresAt),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to renew session expiry.").pipe(
+            Effect.annotateLogs({ sessionId, cause }),
+            Effect.as(undefined),
+          ),
+        ),
+      );
+    });
+
+  const issueAccessToken: SessionStore["Service"]["issueAccessToken"] = Effect.fn(
+    "SessionStore.issueAccessToken",
+  )(function* ({ sessionId, ttl }) {
+    const row = yield* authSessions
+      .getById({ sessionId })
+      .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+    if (Option.isNone(row)) {
+      return yield* new SessionCredentialIssueError({
+        sessionId,
+        cause: new UnknownSessionTokenError({ sessionId }),
+      });
+    }
+    const issuedAt = yield* DateTime.now;
+    const expiresAt = DateTime.add(issuedAt, { milliseconds: Duration.toMillis(ttl) });
+    const token = yield* signClaims({
+      v: 1,
+      kind: "session",
+      sid: sessionId,
+      sub: row.value.subject,
+      scopes: row.value.scopes,
+      method: row.value.method,
+      ...(row.value.runtimeModeCeiling ? { rtc: row.value.runtimeModeCeiling } : {}),
+      iat: issuedAt.epochMilliseconds,
+      exp: expiresAt.epochMilliseconds,
+    });
+    return { token, expiresAt };
+  });
 
   const verify: SessionStore["Service"]["verify"] = Effect.fn("SessionStore.verify")(
     function* (token) {
@@ -797,6 +878,8 @@ export const make = Effect.gen(function* () {
           expiresAt: row.value.expiresAt,
           subject: row.value.subject,
           scopes: row.value.scopes,
+          renewable: row.value.renewable,
+          kind: row.value.kind,
         } satisfies VerifiedSession;
       }
       const [encodedPayload, signature] = token.split(".");
@@ -821,13 +904,6 @@ export const make = Effect.gen(function* () {
           expirationClaim: claims.exp,
         });
       }
-      if (claims.exp <= observedAt.epochMilliseconds) {
-        return yield* new SessionTokenExpiredError({
-          sessionId: claims.sid,
-          expiresAt: expiresAt.value,
-          observedAt,
-        });
-      }
 
       const row = yield* authSessions
         .getById({ sessionId: claims.sid })
@@ -839,23 +915,46 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(row)) {
         return yield* new UnknownSessionTokenError({ sessionId: claims.sid });
       }
+      const { renewable, kind } = row.value;
+      // A renewable session lives as long as its row; the claim's `exp` only records issuance.
+      if (!renewable && claims.exp <= observedAt.epochMilliseconds) {
+        return yield* new SessionTokenExpiredError({
+          sessionId: claims.sid,
+          expiresAt: expiresAt.value,
+          observedAt,
+        });
+      }
       if (row.value.revokedAt !== null) {
         return yield* new SessionTokenRevokedError({
           sessionId: claims.sid,
           revokedAt: row.value.revokedAt,
         });
       }
+      if (row.value.expiresAt.epochMilliseconds <= observedAt.epochMilliseconds) {
+        return yield* new SessionTokenExpiredError({
+          sessionId: claims.sid,
+          expiresAt: row.value.expiresAt,
+          observedAt,
+        });
+      }
+
+      const renewedExpiresAt = renewable
+        ? yield* renewIfDue(claims.sid, row.value.expiresAt, observedAt)
+        : undefined;
 
       return {
         sessionId: claims.sid,
         token,
         method: claims.method,
         client: toClientMetadata(row.value.client),
-        expiresAt: expiresAt.value,
+        expiresAt: renewable ? (renewedExpiresAt ?? row.value.expiresAt) : expiresAt.value,
         subject: claims.sub,
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
+        renewable,
+        kind,
+        ...(renewedExpiresAt ? { renewedExpiresAt } : {}),
       } satisfies VerifiedSession;
     },
   );
@@ -964,6 +1063,8 @@ export const make = Effect.gen(function* () {
       expiresAt: row.value.expiresAt,
       subject: row.value.subject,
       scopes: row.value.scopes,
+      renewable: row.value.renewable,
+      kind: row.value.kind,
     } satisfies VerifiedSession;
   });
 
@@ -1082,6 +1183,7 @@ export const make = Effect.gen(function* () {
     legacyCookieName,
     issue,
     verify,
+    issueAccessToken,
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,

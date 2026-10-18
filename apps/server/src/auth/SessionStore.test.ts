@@ -20,6 +20,7 @@ import { PersistenceSqlError } from "../persistence/Errors.ts";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
+import * as SessionLifetime from "./SessionLifetime.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { base64UrlDecodeUtf8, base64UrlEncode, signPayload } from "./utils.ts";
@@ -41,11 +42,15 @@ const layerServerEnvironment = (environmentId: EnvironmentId) =>
     getEnvironmentId: Effect.succeed(environmentId),
   });
 
+const IDLE_PERIOD = Duration.days(90);
+const layerSessionLifetime = SessionLifetime.layerFixed(IDLE_PERIOD);
+
 const layerSessionStore = (
   overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
   environmentId = EnvironmentId.make("test-environment"),
 ) =>
   SessionStore.layer.pipe(
+    Layer.provide(layerSessionLifetime),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(layerServerEnvironment(environmentId)),
@@ -71,6 +76,7 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
   yield* ServerConfig.ensureServerDirectories(paths);
   const layerPersistence = SqlitePersistence.layerFromPath(paths.dbPath);
   return SessionStore.layer.pipe(
+    Layer.provide(layerSessionLifetime),
     Layer.provide(layerPersistence),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(layerServerEnvironment(EnvironmentId.make(baseDir))),
@@ -109,6 +115,7 @@ const layerFailingSessionLookupCredential = Layer.effect(
   SessionStore.make,
 ).pipe(
   Layer.provide(layerFailingSessionLookupRepository),
+  Layer.provide(layerSessionLifetime),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
@@ -146,10 +153,10 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
-  it.effect("expires a connected session at its credential deadline", () =>
+  it.effect("expires a connected fixed session at its credential deadline", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
-      const client = yield* sessions.issue(relaySessionInput);
+      const client = yield* sessions.issue({ ...relaySessionInput, renewable: false });
       yield* sessions.markConnected(client.sessionId);
       const invalidated = yield* Deferred.make<void>();
       const watcher = yield* sessions
@@ -362,6 +369,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(
       Effect.provide(
         SessionStore.layer.pipe(
+          Layer.provide(layerSessionLifetime),
           Layer.provideMerge(ServerSecretStore.layer),
           Layer.provide(SqlitePersistence.layerMemory),
           Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
@@ -850,5 +858,146 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       yield* sessions.recordClientConnection(issued.sessionId, {});
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
     }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
+  );
+  it.effect("keeps a renewable session alive past its original claim expiry while used", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ method: "bearer-access-token", renewable: true });
+      expect(issued.expiresAt.epochMilliseconds).toBe(Duration.toMillis(IDLE_PERIOD));
+
+      yield* TestClock.adjust(Duration.days(80));
+      const first = yield* sessions.verify(issued.token);
+      yield* TestClock.adjust(Duration.days(80));
+      const second = yield* sessions.verify(issued.token);
+
+      expect(first.renewable).toBe(true);
+      expect(first.kind).toBe("session");
+      expect(first.renewedExpiresAt?.epochMilliseconds).toBe(
+        Duration.toMillis(Duration.sum(Duration.days(80), IDLE_PERIOD)),
+      );
+      expect(second.sessionId).toBe(issued.sessionId);
+      expect(second.expiresAt?.epochMilliseconds).toBe(
+        Duration.toMillis(Duration.sum(Duration.days(160), IDLE_PERIOD)),
+      );
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("expires a renewable session after the idle period without use", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ renewable: true });
+
+      yield* TestClock.adjust(Duration.days(91));
+
+      expect(yield* Effect.flip(sessions.verify(issued.token))).toMatchObject({
+        _tag: "SessionTokenExpiredError",
+        sessionId: issued.sessionId,
+      });
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("does not write on every verify inside the throttle window", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const repository = yield* AuthSessions.AuthSessionRepository;
+      const issued = yield* sessions.issue({ renewable: true });
+      const rowExpiry = repository
+        .getById({ sessionId: issued.sessionId })
+        .pipe(Effect.map((row) => Option.getOrThrow(row).expiresAt.epochMilliseconds));
+      const initialExpiry = yield* rowExpiry;
+
+      yield* TestClock.adjust(Duration.hours(12));
+      const insideWindow = yield* sessions.verify(issued.token);
+      expect(insideWindow.renewedExpiresAt).toBeUndefined();
+      expect(yield* rowExpiry).toBe(initialExpiry);
+
+      yield* TestClock.adjust(Duration.days(2));
+      const renewed = yield* sessions.verify(issued.token);
+      const renewedExpiry = yield* rowExpiry;
+      expect(renewed.renewedExpiresAt?.epochMilliseconds).toBe(renewedExpiry);
+      expect(renewedExpiry).toBeGreaterThan(initialExpiry);
+
+      yield* TestClock.adjust(Duration.hours(12));
+      const again = yield* sessions.verify(issued.token);
+      expect(again.renewedExpiresAt).toBeUndefined();
+      expect(again.expiresAt?.epochMilliseconds).toBe(renewedExpiry);
+      expect(yield* rowExpiry).toBe(renewedExpiry);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps fixed sessions on their claim expiry", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ renewable: false, ttl: Duration.days(30) });
+
+      const verified = yield* sessions.verify(issued.token);
+      expect(verified.renewable).toBe(false);
+      yield* TestClock.adjust(Duration.days(31));
+
+      expect(yield* Effect.flip(sessions.verify(issued.token))).toMatchObject({
+        _tag: "SessionTokenExpiredError",
+      });
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("rejects an unexpired claim once its session row has expired", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        ttl: Duration.days(1),
+        sessionTtl: Duration.hours(1),
+      });
+
+      yield* TestClock.adjust(Duration.hours(2));
+
+      const error = yield* Effect.flip(sessions.verify(issued.token));
+      expect(error).toMatchObject({ _tag: "SessionTokenExpiredError" });
+      if (error._tag === "SessionTokenExpiredError") {
+        expect(error.expiresAt.epochMilliseconds).toBe(Duration.toMillis(Duration.hours(1)));
+      }
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("issues a short access token on an existing session row", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const repository = yield* AuthSessions.AuthSessionRepository;
+      const grant = yield* sessions.issue({
+        subject: "mcp-client",
+        method: "bearer-access-token",
+        scopes: ["orchestration:read"],
+        runtimeModeCeiling: "auto",
+        kind: "oauth-grant",
+        ttl: Duration.hours(1),
+        sessionTtl: IDLE_PERIOD,
+      });
+      const rowBefore = Option.getOrThrow(
+        yield* repository.getById({ sessionId: grant.sessionId }),
+      );
+
+      const access = yield* sessions.issueAccessToken({
+        sessionId: grant.sessionId,
+        ttl: Duration.hours(1),
+      });
+      const verified = yield* sessions.verify(access.token);
+      expect(verified).toMatchObject({
+        sessionId: grant.sessionId,
+        subject: "mcp-client",
+        method: "bearer-access-token",
+        scopes: ["orchestration:read"],
+        runtimeModeCeiling: "auto",
+        kind: "oauth-grant",
+      });
+      expect(access.expiresAt.epochMilliseconds).toBe(Duration.toMillis(Duration.hours(1)));
+
+      yield* TestClock.adjust(Duration.minutes(61));
+
+      expect(yield* Effect.flip(sessions.verify(access.token))).toMatchObject({
+        _tag: "SessionTokenExpiredError",
+      });
+      expect(Option.getOrThrow(yield* repository.getById({ sessionId: grant.sessionId }))).toEqual(
+        rowBefore,
+      );
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 });
