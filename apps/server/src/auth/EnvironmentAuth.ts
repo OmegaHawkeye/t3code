@@ -10,6 +10,7 @@ import {
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
   type AuthClientSession,
+  type AuthLongLivedTokenResult,
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
   type AuthMcpClientAccess,
@@ -95,6 +96,9 @@ export const mcpClientScopes = (
           AuthSourceControlWriteScope,
         ]
       : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
+
+// Fixed lifetime, like `claude setup-token`: revoke it to end access sooner.
+export const LONG_LIVED_TOKEN_TTL = Duration.days(360);
 
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
@@ -576,6 +580,15 @@ export class EnvironmentAuth extends Context.Service<
       readonly access: AuthMcpClientAccess;
       readonly client: AuthClientMetadata;
     }) => Effect.Effect<McpClientGrantToken, ServerAuthInternalError>;
+    /**
+     * Issues a fixed 360-day bearer token for headless services. It uses the MCP
+     * client subject, so `/mcp` accepts it within `access` and nothing else does.
+     */
+    readonly issueLongLivedToken: (input: {
+      readonly label: string;
+      readonly access: AuthMcpClientAccess;
+      readonly client: AuthClientMetadata;
+    }) => Effect.Effect<AuthLongLivedTokenResult, ServerAuthInternalError>;
     /**
      * Signs a fresh access token for an existing MCP grant and moves the grant's idle
      * deadline forward. Fails with an invalid credential for a revoked or expired grant.
@@ -1344,6 +1357,29 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
   );
 
+  const issueLongLivedToken: EnvironmentAuth["Service"]["issueLongLivedToken"] = Effect.fn(
+    "EnvironmentAuth.issueLongLivedToken",
+  )(
+    function* (input) {
+      const issued = yield* sessions.issue({
+        subject: MCP_CLIENT_SUBJECT,
+        method: "bearer-access-token",
+        scopes: mcpClientScopes(input.access),
+        ttl: LONG_LIVED_TOKEN_TTL,
+        renewable: false,
+        kind: "long-lived-token",
+        ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
+        client: { ...input.client, label: input.label, deviceType: "bot" },
+      });
+      return {
+        sessionId: issued.sessionId,
+        token: issued.token,
+        expiresAt: DateTime.toUtc(issued.expiresAt),
+      } satisfies AuthLongLivedTokenResult;
+    },
+    Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
+  );
+
   const renewMcpClientSession: EnvironmentAuth["Service"]["renewMcpClientSession"] = Effect.fn(
     "EnvironmentAuth.renewMcpClientSession",
   )(function* (sessionId) {
@@ -1429,6 +1465,7 @@ export const make = Effect.gen(function* () {
     issueStartupPairingUrl,
     authenticateMcpClient,
     issueMcpClientSession,
+    issueLongLivedToken,
     renewMcpClientSession,
     consumeMcpApprovalCode,
     authenticateBrowserSession,

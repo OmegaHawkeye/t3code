@@ -19,6 +19,8 @@ describe("applyAuthAccessStreamEvent", () => {
       subject: "subject",
       scopes: ["orchestration:read"],
       method: "browser-session-cookie",
+      kind: "session",
+      renewable: true,
       client: {
         label: "Phone",
         deviceType: "mobile",

@@ -462,6 +462,29 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "createLongLivedToken",
+        Effect.fn("environment.auth.createLongLivedToken")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            // A token must not out-reach the credential that mints it.
+            for (const scope of EnvironmentAuth.mcpClientScopes(args.payload.access)) {
+              if (!session.scopes.has(scope)) {
+                return yield* failEnvironmentScopeRequired(scope);
+              }
+            }
+            return yield* serverAuth.issueLongLivedToken({
+              label: args.payload.label,
+              access: args.payload.access,
+              client: { label: args.payload.label, deviceType: "bot" },
+            });
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("long_lived_token_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "pairingLinks",
         Effect.fn("environment.auth.pairingLinks")(
           function* (args) {

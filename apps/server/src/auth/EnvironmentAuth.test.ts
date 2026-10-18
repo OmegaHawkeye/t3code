@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -737,6 +739,54 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect(yield* renewableOf(bearer.access_token)).toBe(true);
       expect(yield* renewableOf(dpop.access_token)).toBe(false);
       expect(yield* renewableOf(cli.token)).toBe(false);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  const issueLongLived = Effect.gen(function* () {
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    return {
+      serverAuth,
+      issued: yield* serverAuth.issueLongLivedToken({
+        label: "CI",
+        access: "auto-accept-edits",
+        client: requestMetadata,
+      }),
+    };
+  });
+
+  it.effect("issues a 360-day long-lived token that /mcp accepts within its ceiling", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      const now = yield* DateTime.now;
+      expect(DateTime.toEpochMillis(issued.expiresAt) - DateTime.toEpochMillis(now)).toBe(
+        Duration.toMillis(Duration.days(360)),
+      );
+      const mcp = yield* serverAuth.authenticateMcpClient(makeBearerRequest(issued.token));
+      expect(mcp).toMatchObject({ sessionId: issued.sessionId, label: "CI" });
+      expect(mcp.access).toBe("auto-accept-edits");
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("rejects a long-lived token after 360 days even if used recently", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      yield* TestClock.adjust(Duration.days(359));
+      yield* serverAuth.authenticateMcpClient(makeBearerRequest(issued.token));
+      yield* TestClock.adjust(Duration.days(2));
+      const exit = yield* Effect.exit(
+        serverAuth.authenticateMcpClient(makeBearerRequest(issued.token)),
+      );
+      expect(exit._tag).toBe("Failure");
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("lists long-lived tokens as kind long-lived-token", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      const entry = (yield* serverAuth.listClientSessions(issued.sessionId)).find(
+        (candidate) => candidate.sessionId === issued.sessionId,
+      );
+      expect(entry).toMatchObject({ kind: "long-lived-token", renewable: false });
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 });

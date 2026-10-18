@@ -303,6 +303,94 @@ it.effect("does not set a cookie for a bearer credential", () =>
   }),
 );
 
+const longLivedTokenRequest = (cookie: string, access: string) =>
+  postJson("/api/auth/long-lived-tokens", { label: "CI", access }, { cookie });
+
+const withDevAndRestrictedCookies = <A, E>(
+  use: (input: {
+    readonly run: (request: Request) => Effect.Effect<Response>;
+    readonly devCookie: string;
+    readonly restrictedCookie: string;
+  }) => Effect.Effect<A, E>,
+) =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const run = (request: Request) =>
+            Effect.promise(() => environment.handler(request, requestContext));
+          const devResponse = yield* run(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+          );
+          const devCookie = (
+            devResponse.headers.getSetCookie().find((c) => c.startsWith("t3_dev_session_")) ?? ""
+          ).split(";", 1)[0]!;
+          const pairing = (yield* run(
+            postJson(
+              "/api/auth/pairing-token",
+              { scopes: ["access:write", "orchestration:read"] },
+              { cookie: devCookie },
+            ),
+          ).pipe(
+            Effect.flatMap((response) =>
+              Effect.promise(() => response.json() as Promise<{ credential: string }>),
+            ),
+          )) as { credential: string };
+          const restricted = yield* run(
+            postJson("/api/auth/browser-session", { credential: pairing.credential }),
+          );
+          const restrictedCookie = restricted.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+          return yield* use({ run, devCookie, restrictedCookie });
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(NodeServices.layer));
+
+it.effect("creates a long-lived token for a caller with access:write", () =>
+  withDevAndRestrictedCookies(({ run, devCookie }) =>
+    Effect.gen(function* () {
+      const response = yield* run(longLivedTokenRequest(devCookie, "full-access"));
+      expect(response.status).toBe(200);
+      const body = (yield* Effect.promise(() => response.json())) as {
+        token: string;
+        sessionId: string;
+        expiresAt: string;
+      };
+      expect(body.token.length).toBeGreaterThan(20);
+      expect(body.sessionId).toBeTruthy();
+      expect(Date.parse(body.expiresAt)).toBeGreaterThan(
+        (yield* Clock.currentTimeMillis) + 359 * 86_400_000,
+      );
+    }),
+  ),
+);
+
+it.effect("refuses a long-lived token wider than the caller's scopes", () =>
+  withDevAndRestrictedCookies(({ run, restrictedCookie }) =>
+    Effect.gen(function* () {
+      const response = yield* run(longLivedTokenRequest(restrictedCookie, "full-access"));
+      expect(response.status).toBe(403);
+      expect(yield* Effect.promise(() => response.json())).toMatchObject({
+        requiredScope: "orchestration:operate",
+      });
+      const narrow = yield* run(longLivedTokenRequest(restrictedCookie, "read-only"));
+      expect(narrow.status).toBe(200);
+    }),
+  ),
+);
+
 it.effect("exports only verified T3 Connect requests", () =>
   Effect.gen(function* () {
     const productSpans: Array<string> = [];

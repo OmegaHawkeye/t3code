@@ -282,6 +282,8 @@ export const AuthClientSession = Schema.Struct({
   subject: TrimmedNonEmptyString,
   ...authScopeResponseFields,
   method: ServerAuthSessionMethod,
+  kind: AuthSessionKind,
+  renewable: Schema.Boolean,
   client: AuthClientMetadata,
   issuedAt: Schema.DateTimeUtc,
   expiresAt: Schema.DateTimeUtc,
@@ -402,6 +404,19 @@ export const AuthMcpClientAccess = Schema.Literals([
   "full-access",
 ]);
 export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
+
+export const AuthCreateLongLivedTokenInput = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  access: AuthMcpClientAccess,
+});
+export type AuthCreateLongLivedTokenInput = typeof AuthCreateLongLivedTokenInput.Type;
+
+export const AuthLongLivedTokenResult = Schema.Struct({
+  sessionId: AuthSessionId,
+  token: Schema.String,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type AuthLongLivedTokenResult = typeof AuthLongLivedTokenResult.Type;
 
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
