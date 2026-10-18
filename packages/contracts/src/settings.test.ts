@@ -23,6 +23,24 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ServerSettings auth idle period", () => {
+  it("defaults to 90 days", () => {
+    expect(decodeServerSettings({}).authIdlePeriodDays).toBe(90);
+  });
+
+  it.each([1, 360])("accepts %s", (authIdlePeriodDays) => {
+    expect(decodeServerSettings({ authIdlePeriodDays }).authIdlePeriodDays).toBe(
+      authIdlePeriodDays,
+    );
+    expect(decodeServerSettingsPatch({ authIdlePeriodDays })).toEqual({ authIdlePeriodDays });
+  });
+
+  it.each([0, 361, 1.5])("rejects %s", (authIdlePeriodDays) => {
+    expect(() => decodeServerSettings({ authIdlePeriodDays })).toThrow();
+    expect(() => decodeServerSettingsPatch({ authIdlePeriodDays })).toThrow();
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

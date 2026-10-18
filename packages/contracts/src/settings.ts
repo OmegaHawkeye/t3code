@@ -1037,6 +1037,14 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const MIN_AUTH_IDLE_PERIOD_DAYS = 1;
+// Below the 360-day fixed token lifetime so an idle session cannot outlive one.
+export const MAX_AUTH_IDLE_PERIOD_DAYS = 360;
+export const DEFAULT_AUTH_IDLE_PERIOD_DAYS = 90;
+export const AuthIdlePeriodDays = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_AUTH_IDLE_PERIOD_DAYS, maximum: MAX_AUTH_IDLE_PERIOD_DAYS }),
+);
+
 export const ServerSettings = Schema.Struct({
   // Null means no client has migrated this preference yet; an empty value is
   // authoritative so another device cannot resurrect cleared preferences.
@@ -1063,6 +1071,10 @@ export const ServerSettings = Schema.Struct({
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+
+  authIdlePeriodDays: AuthIdlePeriodDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AUTH_IDLE_PERIOD_DAYS)),
   ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1381,6 +1393,7 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  authIdlePeriodDays: Schema.optionalKey(AuthIdlePeriodDays),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
