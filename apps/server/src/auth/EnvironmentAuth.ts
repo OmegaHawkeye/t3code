@@ -1280,6 +1280,7 @@ export const make = Effect.gen(function* () {
               method: session.method,
               scopes: session.scopes,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+              renewable: session.renewable,
             })),
           );
         }
