@@ -1,11 +1,14 @@
 import {
   type AdvertisedEndpoint,
   type AuthGrantScope,
+  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type DesktopBridge,
   type DesktopWslState,
 } from "@t3tools/contracts";
+import { formatExpiresInLabel } from "../../timestampFormat";
 
 /**
  * Operating terminals without being able to list them leaves a client
@@ -97,4 +100,32 @@ export async function applyWslEnableSelection(input: {
     await bridge.setWslDistro(nextDistro);
   }
   return await bridge.setWslBackendEnabled(true);
+}
+
+/** Long-lived tokens are managed in their own section, not the client list. */
+export function splitClientSessions<T extends { readonly kind: string }>(
+  sessions: ReadonlyArray<T>,
+): { clients: T[]; longLivedTokens: T[] } {
+  const clients: T[] = [];
+  const longLivedTokens: T[] = [];
+  for (const session of sessions) {
+    (session.kind === "long-lived-token" ? longLivedTokens : clients).push(session);
+  }
+  return { clients, longLivedTokens };
+}
+
+export function clientExpiryLabel(
+  session: { readonly renewable: boolean; readonly expiresAt: string },
+  nowMs: number,
+): string {
+  return session.renewable ? "Renews on use" : formatExpiresInLabel(session.expiresAt, nowMs);
+}
+
+/**
+ * Sessions expose scopes, not the access level they were created with, so the
+ * three middle levels collapse into "Operate".
+ */
+export function longLivedTokenAccessLabel(scopes: ReadonlyArray<string>): string {
+  if (scopes.includes(AuthSettingsWriteScope)) return "Full access";
+  return scopes.includes(AuthOrchestrationOperateScope) ? "Operate" : "Read only";
 }

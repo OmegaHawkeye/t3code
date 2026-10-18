@@ -67,6 +67,8 @@ import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls
 import {
   applyWslEnableSelection,
   canRevokeOtherClients,
+  clientExpiryLabel,
+  splitClientSessions,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
@@ -89,6 +91,7 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { LongLivedTokensSection } from "./LongLivedTokensSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -983,6 +986,8 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
               </>
             ) : null}
             <AccessScopeSummary scopes={clientSession.scopes} label="Client scopes" />
+            <span aria-hidden> · </span>
+            {clientExpiryLabel(clientSession, nowMs)}
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -2234,6 +2239,8 @@ export function ConnectionsSettings() {
       ),
     );
   })();
+  const { clients: desktopClients, longLivedTokens: desktopLongLivedTokens } =
+    splitClientSessions(desktopClientSessions);
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
@@ -3302,7 +3309,7 @@ export function ConnectionsSettings() {
         isLoading={isLoadingDesktopAccessManagement}
         pairingLinks={visibleDesktopPairingLinks}
         createdPairingCredentials={createdPairingCredentials}
-        clientSessions={desktopClientSessions}
+        clientSessions={desktopClients}
         revokingPairingLinkId={revokingDesktopPairingLinkId}
         revokingClientSessionId={revokingDesktopClientSessionId}
         onRevokePairingLink={handleRevokeDesktopPairingLink}
@@ -3511,10 +3518,7 @@ export function ConnectionsSettings() {
             <FoldedSettingsSection
               id="authorized-clients"
               title="Authorized clients"
-              summary={summarizeAuthorizedClients(
-                desktopClientSessions,
-                visibleDesktopPairingLinks,
-              )}
+              summary={summarizeAuthorizedClients(desktopClients, visibleDesktopPairingLinks)}
               control={
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
@@ -3548,6 +3552,14 @@ export function ConnectionsSettings() {
                 )}
               </ScrollArea>
             </FoldedSettingsSection>
+          ) : null}
+          {canReadAccess ? (
+            <LongLivedTokensSection
+              tokens={desktopLongLivedTokens}
+              canWrite={canWriteAccess}
+              revokingSessionId={revokingDesktopClientSessionId}
+              onRevoke={handleRevokeDesktopClientSession}
+            />
           ) : null}
           <AlertDialog
             open={isDesktopServerExposureDialogOpen && canManageLocalBackend}
