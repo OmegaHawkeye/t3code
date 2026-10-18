@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpServerRequest } from "effect/http";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
@@ -163,6 +165,87 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const sessionCookieFixture = (renewal: "after-throttle" | "within-throttle") =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const testClock = yield* Clock.Clock;
+    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    // The web handler runs on its own runtime; pass the test clock per request.
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+      Context.add(Clock.Clock, testClock),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const devResponse = yield* Effect.promise(() =>
+            environment.handler(
+              postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+              requestContext,
+            ),
+          );
+          const devCookie = (
+            devResponse.headers.getSetCookie().find((c) => c.startsWith("t3_dev_session_")) ?? ""
+          ).split(";", 1)[0]!;
+          const pairing = yield* Effect.promise(async () => {
+            const response = await environment.handler(
+              postJson("/api/auth/pairing-token", {}, { cookie: devCookie }),
+              requestContext,
+            );
+            return (await response.json()) as { credential: string };
+          });
+          const issued = yield* Effect.promise(() =>
+            environment.handler(
+              postJson("/api/auth/browser-session", { credential: pairing.credential }),
+              requestContext,
+            ),
+          );
+          const cookie = issued.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+          yield* TestClock.adjust(
+            renewal === "after-throttle" ? Duration.days(2) : Duration.hours(1),
+          );
+          const response = yield* Effect.promise(() =>
+            environment.handler(
+              new Request("http://127.0.0.1/api/auth/session", { headers: { cookie } }),
+              requestContext,
+            ),
+          );
+          return { response, cookie, nowMs: yield* testClock.currentTimeMillis };
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(NodeServices.layer));
+
+it.effect("re-sends the session cookie with the renewed expiry", () =>
+  Effect.gen(function* () {
+    const { response, cookie, nowMs } = yield* sessionCookieFixture("after-throttle");
+    expect(response.status).toBe(200);
+    const setCookie = response.headers.getSetCookie();
+    expect(setCookie).toHaveLength(1);
+    expect(setCookie[0]).toContain(`${cookie};`);
+    expect(setCookie[0]).toContain("HttpOnly");
+    const expires = /Expires=([^;]+)/i.exec(setCookie[0]!)?.[1];
+    expect(
+      Math.abs(Date.parse(expires!) - (nowMs + Duration.toMillis(Duration.days(90)))),
+    ).toBeLessThanOrEqual(1000);
+  }),
+);
+
+it.effect("does not set a cookie when nothing was renewed", () =>
+  Effect.gen(function* () {
+    const { response } = yield* sessionCookieFixture("within-throttle");
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie()).toHaveLength(0);
+  }),
 );
 
 it.effect("exports only verified T3 Connect requests", () =>

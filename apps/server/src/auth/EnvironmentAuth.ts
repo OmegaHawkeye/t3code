@@ -106,6 +106,7 @@ export interface AuthenticatedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  readonly renewedExpiresAt?: DateTime.Utc;
 }
 
 const serverAuthInternalErrorContext = {
@@ -470,7 +471,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
     readonly getSessionState: (
       request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<AuthSessionState, ServerAuthInternalError>;
+    ) => Effect.Effect<
+      AuthSessionState & { readonly renewedExpiresAt?: DateTime.Utc },
+      ServerAuthInternalError
+    >;
     readonly createBrowserSession: (
       credential: string,
       requestMetadata: AuthClientMetadata,
@@ -755,6 +759,7 @@ export const make = Effect.gen(function* () {
         scopes: session.scopes,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        ...(session.renewedExpiresAt ? { renewedExpiresAt: session.renewedExpiresAt } : {}),
       })),
     );
 
@@ -845,7 +850,8 @@ export const make = Effect.gen(function* () {
             ...authScopeResponse(session.scopes),
             sessionMethod: session.method,
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
-          }) satisfies AuthSessionState,
+            ...(session.renewedExpiresAt ? { renewedExpiresAt: session.renewedExpiresAt } : {}),
+          }) satisfies AuthSessionState & { readonly renewedExpiresAt?: DateTime.Utc },
       ),
       Effect.catchIf(isServerAuthCredentialError, () =>
         Effect.succeed({
