@@ -45,6 +45,7 @@ import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -77,7 +78,9 @@ export interface IssuedBearerSession {
  * cannot reach the full RPC surface around that cap.
  */
 const MCP_CLIENT_SUBJECT = "mcp-client";
-const MCP_CLIENT_SESSION_TTL = Duration.days(30);
+// Short because the grant row, not the access token, carries the long idle lifetime;
+// clients stay signed in by refreshing.
+export const MCP_CLIENT_ACCESS_TOKEN_TTL = Duration.hours(1);
 
 export const mcpClientScopes = (
   access: AuthMcpClientAccess,
@@ -97,6 +100,15 @@ export interface McpClientSession {
   readonly sessionId: AuthSessionId;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
+}
+
+export interface McpClientGrantToken {
+  readonly sessionId: AuthSessionId;
+  readonly token: string;
+  readonly expiresAt: DateTime.Utc;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  /** When the grant lapses unless it is refreshed again. */
+  readonly grantExpiresAt: DateTime.Utc;
 }
 
 export interface AuthenticatedSession {
@@ -563,9 +575,16 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly client: AuthClientMetadata;
-    }) => Effect.Effect<
-      { readonly token: string; readonly expiresAt: DateTime.DateTime },
-      ServerAuthInternalError
+    }) => Effect.Effect<McpClientGrantToken, ServerAuthInternalError>;
+    /**
+     * Signs a fresh access token for an existing MCP grant and moves the grant's idle
+     * deadline forward. Fails with an invalid credential for a revoked or expired grant.
+     */
+    readonly renewMcpClientSession: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<
+      McpClientGrantToken,
+      ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
     /**
      * Spends a one-time pairing code as approval for an MCP client with the
@@ -728,6 +747,8 @@ export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
+  const authSessions = yield* AuthSessions.AuthSessionRepository;
+  const sessionLifetime = yield* SessionLifetime.SessionLifetime;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
@@ -1291,21 +1312,60 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
-    sessions
-      .issue({
+  // Fixed, not renewable: `verify` must keep enforcing the one-hour claim, and only the
+  // refresh grant moves the row's idle deadline.
+  const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = Effect.fn(
+    "EnvironmentAuth.issueMcpClientSession",
+  )(
+    function* (input) {
+      const idlePeriod = yield* sessionLifetime.idlePeriod;
+      const issued = yield* sessions.issue({
         subject: MCP_CLIENT_SUBJECT,
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
-        ttl: MCP_CLIENT_SESSION_TTL,
+        ttl: MCP_CLIENT_ACCESS_TOKEN_TTL,
+        sessionTtl: idlePeriod,
+        renewable: false,
+        kind: "oauth-grant",
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         client: { ...input.client, label: input.label, deviceType: "bot" },
-      })
+      });
+      return {
+        sessionId: issued.sessionId,
+        token: issued.token,
+        expiresAt: DateTime.toUtc(issued.expiresAt),
+        scopes: issued.scopes,
+        grantExpiresAt: yield* DateTime.now.pipe(
+          Effect.map((now) => DateTime.add(now, { milliseconds: Duration.toMillis(idlePeriod) })),
+        ),
+      } satisfies McpClientGrantToken;
+    },
+    Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
+  );
+
+  const renewMcpClientSession: EnvironmentAuth["Service"]["renewMcpClientSession"] = Effect.fn(
+    "EnvironmentAuth.renewMcpClientSession",
+  )(function* (sessionId) {
+    const issued = yield* sessions
+      .issueAccessToken({ sessionId, ttl: MCP_CLIENT_ACCESS_TOKEN_TTL })
       .pipe(
-        Effect.map((issued) => ({ token: issued.token, expiresAt: issued.expiresAt })),
-        Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
-        Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),
+        Effect.mapError((cause) =>
+          cause._tag === "SessionAccessTokenRefusedError"
+            ? new ServerAuthInvalidCredentialError({
+                diagnostic: `MCP grant cannot be renewed (${cause.reason}).`,
+              })
+            : new ServerAuthSessionTokenIssueError({ cause }),
+        ),
       );
+    const now = yield* DateTime.now;
+    const grantExpiresAt = DateTime.add(now, {
+      milliseconds: Duration.toMillis(yield* sessionLifetime.idlePeriod),
+    });
+    yield* authSessions
+      .setExpiresAt({ sessionId, expiresAt: grantExpiresAt })
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
+    return { sessionId, ...issued, grantExpiresAt } satisfies McpClientGrantToken;
+  });
 
   const authenticateBrowserSession: EnvironmentAuth["Service"]["authenticateBrowserSession"] = (
     request,
@@ -1368,6 +1428,7 @@ export const make = Effect.gen(function* () {
     issueStartupPairingUrl,
     authenticateMcpClient,
     issueMcpClientSession,
+    renewMcpClientSession,
     consumeMcpApprovalCode,
     authenticateBrowserSession,
   });

@@ -407,7 +407,11 @@ export class SessionStore extends Context.Service<
       readonly sessionId: AuthSessionId;
       readonly ttl: Duration.Duration;
     }) => Effect.Effect<
-      { readonly token: string; readonly expiresAt: DateTime.Utc },
+      {
+        readonly token: string;
+        readonly expiresAt: DateTime.Utc;
+        readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+      },
       SessionCredentialInternalError
     >;
     readonly issueWebSocketToken: (
@@ -865,7 +869,7 @@ export const make = Effect.gen(function* () {
       iat: issuedAt.epochMilliseconds,
       exp: expiresAt.epochMilliseconds,
     });
-    return { token, expiresAt };
+    return { token, expiresAt, scopes: row.value.scopes };
   });
 
   const verify: SessionStore["Service"]["verify"] = Effect.fn("SessionStore.verify")(

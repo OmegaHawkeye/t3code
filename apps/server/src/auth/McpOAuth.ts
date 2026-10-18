@@ -18,6 +18,7 @@ import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -28,6 +29,7 @@ import { HttpServerRequest } from "effect/http";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as AuthMcpRefreshTokens from "../persistence/AuthMcpRefreshTokens.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
@@ -46,7 +48,11 @@ import {
  */
 
 const SIGNING_SECRET_NAME = "mcp-oauth-signing-key";
+const REFRESH_SECRET_NAME = "mcp-oauth-refresh-key";
 const AUTHORIZATION_CODE_TTL_MS = 60_000;
+// A client whose refresh response was lost retries with the old token; within this window it
+// gets the same successor instead of tripping reuse detection.
+const REFRESH_GRACE_MS = 30_000;
 const MAX_CLIENT_NAME_LENGTH = 100;
 const MAX_REDIRECT_URIS = 5;
 const MAX_REDIRECT_URI_LENGTH = 512;
@@ -88,7 +94,7 @@ export const authorizationServerMetadata = (
   token_endpoint: `${urls.issuer}/oauth/mcp/token`,
   registration_endpoint: `${urls.issuer}/oauth/mcp/register`,
   response_types_supported: ["code"],
-  grant_types_supported: ["authorization_code"],
+  grant_types_supported: ["authorization_code", "refresh_token"],
   code_challenge_methods_supported: ["S256"],
   token_endpoint_auth_methods_supported: ["none"],
   scopes_supported: MCP_OAUTH_SCOPES,
@@ -240,8 +246,12 @@ const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
+  const refreshTokens = yield* AuthMcpRefreshTokens.AuthMcpRefreshTokenRepository;
   const signingKey = yield* secretStore
     .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
+    .pipe(Effect.orDie);
+  const refreshKey = yield* secretStore
+    .getOrCreateRandom(REFRESH_SECRET_NAME, 32)
     .pipe(Effect.orDie);
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
 
@@ -458,13 +468,144 @@ const make = Effect.gen(function* () {
       iss: authorization.issuer,
     });
 
-  const exchangeCode: McpOAuth["Service"]["exchangeCode"] = ({ request, urls, token }) =>
+  const tokenError = (error: AuthMcpTokenError["error"], description: string) =>
+    new AuthMcpTokenError({ error, error_description: description });
+  const invalidRefresh = () =>
+    tokenError("invalid_grant", "The refresh token is invalid, expired or revoked.");
+
+  const hashRefreshToken = (token: string) =>
+    crypto.digest("SHA-256", new TextEncoder().encode(token)).pipe(
+      Effect.orDie,
+      Effect.map((digest) => base64UrlEncode(digest)),
+    );
+
+  // Deterministic, so a retry with the same rotated token re-derives the same successor
+  // without the server keeping any successor secret at rest.
+  const successorOf = (refreshToken: string) => signPayload(refreshToken, refreshKey);
+
+  const tokenResult = (
+    issued: EnvironmentAuth.McpClientGrantToken,
+    refreshToken: string,
+    now: number,
+  ): AuthMcpTokenResult => ({
+    access_token: issued.token,
+    token_type: "Bearer",
+    expires_in: Math.max(0, Math.floor((issued.expiresAt.epochMilliseconds - now) / 1000)),
+    scope: encodeOAuthScope(issued.scopes),
+    refresh_token: refreshToken,
+  });
+
+  const renewGrant = (sessionId: AuthMcpRefreshTokens.AuthMcpRefreshTokenRecord["sessionId"]) =>
+    environmentAuth
+      .renewMcpClientSession(sessionId)
+      .pipe(
+        Effect.catch((cause) =>
+          (EnvironmentAuth.isServerAuthCredentialError(cause)
+            ? Effect.void
+            : Effect.logError("Could not renew an MCP client grant.", { cause })
+          ).pipe(Effect.andThen(Effect.fail(invalidRefresh()))),
+        ),
+      );
+
+  const repositoryFailure = (cause: unknown) =>
+    Effect.logError("MCP refresh token storage failed.", { cause }).pipe(
+      Effect.andThen(Effect.fail(invalidRefresh())),
+    );
+
+  // Replaying a token after the grace window means two parties hold the chain, so neither
+  // keeps it (RFC 9700 §4.14.2).
+  const revokeReusedGrant = (record: AuthMcpRefreshTokens.AuthMcpRefreshTokenRecord) =>
     Effect.gen(function* () {
-      const fail = (error: AuthMcpTokenError["error"], description: string) =>
-        new AuthMcpTokenError({ error, error_description: description });
-      if (token.grant_type !== "authorization_code") {
-        return yield* fail("unsupported_grant_type", "Only authorization_code is supported.");
+      yield* environmentAuth.revokeSession(record.sessionId).pipe(Effect.ignore);
+      yield* refreshTokens.deleteForSession(record.sessionId).pipe(Effect.ignore);
+      yield* Effect.logWarning("Revoked an MCP grant after a rotated refresh token was reused.", {
+        sessionId: record.sessionId,
+      });
+      return yield* invalidRefresh();
+    });
+
+  const resumeRotated = (
+    record: AuthMcpRefreshTokens.AuthMcpRefreshTokenRecord,
+    refreshToken: string,
+    now: number,
+  ) =>
+    Effect.gen(function* () {
+      if (record.rotatedAt === null || record.successorHash === null) {
+        return yield* invalidRefresh();
       }
+      if (now - record.rotatedAt.epochMilliseconds >= REFRESH_GRACE_MS) {
+        return yield* revokeReusedGrant(record);
+      }
+      const successor = successorOf(refreshToken);
+      const successorHash = yield* hashRefreshToken(successor);
+      const successorRecord = yield* refreshTokens
+        .findByHash(record.successorHash)
+        .pipe(Effect.catch(repositoryFailure));
+      // The chain moved on past this successor, so handing it out would only set up a reuse.
+      if (
+        !timingSafeEqualBase64Url(successorHash, record.successorHash) ||
+        Option.isNone(successorRecord) ||
+        successorRecord.value.rotatedAt !== null ||
+        successorRecord.value.expiresAt.epochMilliseconds <= now
+      ) {
+        return yield* invalidRefresh();
+      }
+      const issued = yield* renewGrant(record.sessionId);
+      return tokenResult(issued, successor, now);
+    });
+
+  const exchangeRefreshToken = (urls: McpOAuthUrls, token: AuthMcpTokenRequest) =>
+    Effect.gen(function* () {
+      const refreshToken = token.refresh_token;
+      if (!refreshToken) {
+        return yield* tokenError("invalid_request", "refresh_token is required.");
+      }
+      if (!sameResource(urls, token.resource)) {
+        return yield* tokenError("invalid_grant", `Tokens are only issued for ${urls.resource}.`);
+      }
+      const tokenHash = yield* hashRefreshToken(refreshToken);
+      const found = yield* refreshTokens
+        .findByHash(tokenHash)
+        .pipe(Effect.catch(repositoryFailure));
+      if (Option.isNone(found)) return yield* invalidRefresh();
+      const record = found.value;
+      const now = yield* Clock.currentTimeMillis;
+      if (record.rotatedAt !== null) return yield* resumeRotated(record, refreshToken, now);
+      if (record.expiresAt.epochMilliseconds <= now) return yield* invalidRefresh();
+
+      // Renewing first means a revoked or lapsed grant never rotates its token.
+      const issued = yield* renewGrant(record.sessionId);
+      const successor = successorOf(refreshToken);
+      const rotated = yield* refreshTokens
+        .markRotated({
+          tokenHash,
+          rotatedAt: DateTime.makeUnsafe(now),
+          successor: {
+            tokenHash: yield* hashRefreshToken(successor),
+            sessionId: record.sessionId,
+            createdAt: DateTime.makeUnsafe(now),
+            expiresAt: issued.grantExpiresAt,
+          },
+        })
+        .pipe(Effect.catch(repositoryFailure));
+      if (!rotated) {
+        // A concurrent refresh rotated it first; answer as its retry would be answered.
+        const winner = yield* refreshTokens
+          .findByHash(tokenHash)
+          .pipe(Effect.catch(repositoryFailure));
+        if (Option.isNone(winner)) return yield* invalidRefresh();
+        return yield* resumeRotated(winner.value, refreshToken, now);
+      }
+      return tokenResult(issued, successor, now);
+    });
+
+  const exchangeAuthorizationCode = (
+    request: HttpServerRequest.HttpServerRequest,
+    urls: McpOAuthUrls,
+    token: AuthMcpTokenRequest,
+  ) =>
+    Effect.gen(function* () {
+      const fail = tokenError;
       const { code, redirect_uri: redirectUri, client_id: clientId } = token;
       const verifier = token.code_verifier;
       if (!code || !redirectUri || !clientId || !verifier) {
@@ -496,28 +637,59 @@ const make = Effect.gen(function* () {
       ) {
         return yield* fail("invalid_grant", "The authorization code is invalid or expired.");
       }
+      const issueFailed = (cause: unknown) =>
+        Effect.logError("Could not issue an MCP client session.", { cause }).pipe(
+          Effect.andThen(Effect.fail(fail("invalid_grant", "The session could not be issued."))),
+        );
       const issued = yield* environmentAuth
         .issueMcpClientSession({
           label: pending.clientName,
           access: pending.access,
           client: deriveAuthClientMetadata({ request }),
         })
+        .pipe(Effect.catch(issueFailed));
+      const refreshToken = Buffer.from(yield* crypto.randomBytes(32).pipe(Effect.orDie)).toString(
+        "base64url",
+      );
+      yield* refreshTokens
+        .deleteExpired(DateTime.makeUnsafe(now))
         .pipe(
           Effect.catch((cause) =>
-            Effect.logError("Could not issue an MCP client session.", { cause }).pipe(
-              Effect.andThen(
-                Effect.fail(fail("invalid_grant", "The session could not be issued.")),
-              ),
-            ),
+            Effect.logWarning("Could not prune MCP refresh tokens.", { cause }),
           ),
         );
-      return {
-        access_token: issued.token,
-        token_type: "Bearer",
-        expires_in: Math.max(0, Math.floor((issued.expiresAt.epochMilliseconds - now) / 1000)),
-        scope: encodeOAuthScope(EnvironmentAuth.mcpClientScopes(pending.access)),
-      };
+      yield* refreshTokens
+        .insert({
+          tokenHash: yield* hashRefreshToken(refreshToken),
+          sessionId: issued.sessionId,
+          createdAt: DateTime.makeUnsafe(now),
+          expiresAt: issued.grantExpiresAt,
+        })
+        .pipe(
+          Effect.catch((cause) =>
+            environmentAuth
+              .revokeSession(issued.sessionId)
+              .pipe(Effect.ignore, Effect.andThen(issueFailed(cause))),
+          ),
+        );
+      return tokenResult(issued, refreshToken, now);
     });
+
+  const exchangeCode: McpOAuth["Service"]["exchangeCode"] = ({ request, urls, token }) => {
+    switch (token.grant_type) {
+      case "authorization_code":
+        return exchangeAuthorizationCode(request, urls, token);
+      case "refresh_token":
+        return exchangeRefreshToken(urls, token);
+      default:
+        return Effect.fail(
+          tokenError(
+            "unsupported_grant_type",
+            "Only authorization_code and refresh_token are supported.",
+          ),
+        );
+    }
+  };
 
   return McpOAuth.of({
     register,
@@ -529,7 +701,7 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(McpOAuth, make);
+export const layer = Layer.effect(McpOAuth, make).pipe(Layer.provide(AuthMcpRefreshTokens.layer));
 
 export const layerMcpClientAuthenticator = Layer.effect(
   McpHttpServer.McpClientAuthenticator,
