@@ -789,4 +789,32 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect(entry).toMatchObject({ kind: "long-lived-token", renewable: false });
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
+
+  it.effect("lists a long-lived token with its exact access level", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      const other = yield* serverAuth.issueSession();
+      const sessions = yield* serverAuth.listClientSessions(other.sessionId);
+      expect(sessions.find((entry) => entry.sessionId === issued.sessionId)?.access).toBe(
+        "auto-accept-edits",
+      );
+      expect(sessions.find((entry) => entry.sessionId === other.sessionId)?.access).toBeNull();
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("keeps long-lived tokens when revoking other client sessions", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      const current = yield* serverAuth.issueSession();
+      const other = yield* serverAuth.issueSession();
+      const revoked = yield* serverAuth.revokeOtherClientSessions(current.sessionId);
+      expect(revoked).toBe(1);
+      const remaining = (yield* serverAuth.listClientSessions(current.sessionId)).map(
+        (entry) => entry.sessionId,
+      );
+      expect(remaining).toContain(issued.sessionId);
+      expect(remaining).toContain(current.sessionId);
+      expect(remaining).not.toContain(other.sessionId);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
 });

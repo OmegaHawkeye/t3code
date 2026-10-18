@@ -414,6 +414,7 @@ export const make = Effect.gen(function* () {
         SET revoked_at = ${revokedAt}
         WHERE session_id <> ${currentSessionId}
           AND revoked_at IS NULL
+          AND kind <> 'long-lived-token'
         RETURNING session_id AS "sessionId"
       `,
   });

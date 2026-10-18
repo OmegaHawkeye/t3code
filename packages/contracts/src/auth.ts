@@ -277,6 +277,15 @@ export const AuthClientMetadata = Schema.Struct({
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 
+export const AuthMcpClientAccess = Schema.Literals([
+  "read-only",
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+]);
+export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
+
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
@@ -284,6 +293,8 @@ export const AuthClientSession = Schema.Struct({
   method: ServerAuthSessionMethod,
   kind: AuthSessionKind,
   renewable: Schema.Boolean,
+  // Only MCP client sessions carry an access level; it is null for every other session.
+  access: Schema.NullOr(AuthMcpClientAccess),
   client: AuthClientMetadata,
   issuedAt: Schema.DateTimeUtc,
   expiresAt: Schema.DateTimeUtc,
@@ -395,15 +406,6 @@ export const AuthSessionState = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
-
-export const AuthMcpClientAccess = Schema.Literals([
-  "read-only",
-  "approval-required",
-  "auto-accept-edits",
-  "auto",
-  "full-access",
-]);
-export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
 
 export const AuthCreateLongLivedTokenInput = Schema.Struct({
   label: TrimmedNonEmptyString,

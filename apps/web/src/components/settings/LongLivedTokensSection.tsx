@@ -213,7 +213,7 @@ export const LongLivedTokensSection = memo(function LongLivedTokensSection({
               <div className="min-w-0 flex-1 space-y-1">
                 <h3 className="text-sm font-medium text-foreground">{tokenLabel(token)}</h3>
                 <p className="text-xs text-muted-foreground">
-                  {longLivedTokenAccessLabel(token.scopes)} · Created{" "}
+                  {longLivedTokenAccessLabel(token.access)} · Created{" "}
                   {formatTimestamp(token.issuedAt)} · Expires {formatTimestamp(token.expiresAt)}
                 </p>
               </div>

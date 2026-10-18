@@ -70,6 +70,7 @@ it("formats issued sessions with the bearer token but omits tokens from listings
         method: "bearer-access-token",
         kind: "session",
         renewable: false,
+        access: null,
         scopes: ["orchestration:read", "access:write"],
         subject: "cli-issued-session",
         client: {

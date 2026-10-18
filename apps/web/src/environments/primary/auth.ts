@@ -135,6 +135,7 @@ export interface ServerClientSessionRecord {
   readonly current: boolean;
   readonly kind: AuthClientSession["kind"];
   readonly renewable: boolean;
+  readonly access: AuthClientSession["access"];
 }
 
 type ServerAuthGateState =

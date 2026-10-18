@@ -1,8 +1,7 @@
 import {
   type AdvertisedEndpoint,
   type AuthGrantScope,
-  AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
+  type AuthMcpClientAccess,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type DesktopBridge,
@@ -33,10 +32,14 @@ export function togglePairingScopeSelection(
     : next;
 }
 
+// Long-lived tokens are revoked explicitly in their own section, never in bulk.
 export function canRevokeOtherClients(
-  clientSessions: ReadonlyArray<{ readonly current: boolean }> | null,
+  clientSessions: ReadonlyArray<{ readonly current: boolean; readonly kind: string }> | null,
 ): boolean {
-  return clientSessions === null || clientSessions.some((session) => !session.current);
+  return (
+    clientSessions === null ||
+    clientSessions.some((session) => !session.current && session.kind !== "long-lived-token")
+  );
 }
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
@@ -121,11 +124,14 @@ export function clientExpiryLabel(
   return session.renewable ? "Renews on use" : formatExpiresInLabel(session.expiresAt, nowMs);
 }
 
-/**
- * Sessions expose scopes, not the access level they were created with, so the
- * three middle levels collapse into "Operate".
- */
-export function longLivedTokenAccessLabel(scopes: ReadonlyArray<string>): string {
-  if (scopes.includes(AuthSettingsWriteScope)) return "Full access";
-  return scopes.includes(AuthOrchestrationOperateScope) ? "Operate" : "Read only";
+const ACCESS_LABELS: Record<AuthMcpClientAccess, string> = {
+  "read-only": "Read only",
+  "approval-required": "Approval required",
+  "auto-accept-edits": "Auto-accept edits",
+  auto: "Auto",
+  "full-access": "Full access",
+};
+
+export function longLivedTokenAccessLabel(access: AuthMcpClientAccess | null): string {
+  return access === null ? "Unknown" : ACCESS_LABELS[access];
 }

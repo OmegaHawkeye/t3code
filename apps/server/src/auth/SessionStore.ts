@@ -1,10 +1,12 @@
 import {
+  AuthOrchestrationOperateScope,
   AuthSessionId,
   AuthStandardClientScopes,
   AuthEnvironmentScopes,
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
+  type AuthMcpClientAccess,
   type AuthSessionKind,
   type ClientSurface,
   RuntimeMode,
@@ -519,6 +521,20 @@ function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthCli
   };
 }
 
+const MCP_CLIENT_SUBJECT = "mcp-client";
+
+/** Mirrors how `authenticateMcpClient` resolves an MCP client's access. */
+export function resolveMcpClientAccess(input: {
+  readonly subject: string;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly runtimeModeCeiling: RuntimeMode | null | undefined;
+}): AuthMcpClientAccess | null {
+  if (input.subject !== MCP_CLIENT_SUBJECT) return null;
+  return input.scopes.includes(AuthOrchestrationOperateScope)
+    ? (input.runtimeModeCeiling ?? "approval-required")
+    : "read-only";
+}
+
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -601,6 +617,7 @@ export const make = Effect.gen(function* () {
           method: row.value.method,
           kind: row.value.kind,
           renewable: row.value.renewable,
+          access: resolveMcpClientAccess(row.value),
           client: toClientMetadata(row.value.client),
           issuedAt: row.value.issuedAt,
           expiresAt: row.value.expiresAt,
@@ -793,6 +810,11 @@ export const make = Effect.gen(function* () {
           method: claims.method,
           kind: input?.kind ?? "session",
           renewable,
+          access: resolveMcpClientAccess({
+            subject: claims.sub,
+            scopes: claims.scopes,
+            runtimeModeCeiling: input?.runtimeModeCeiling,
+          }),
           client,
           issuedAt,
           expiresAt: sessionExpiresAt,
@@ -1119,6 +1141,7 @@ export const make = Effect.gen(function* () {
           method: row.method,
           kind: row.kind,
           renewable: row.renewable,
+          access: resolveMcpClientAccess(row),
           client: toClientMetadata(row.client),
           issuedAt: row.issuedAt,
           expiresAt: row.expiresAt,

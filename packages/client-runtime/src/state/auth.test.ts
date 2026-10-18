@@ -21,6 +21,7 @@ describe("applyAuthAccessStreamEvent", () => {
       method: "browser-session-cookie",
       kind: "session",
       renewable: true,
+      access: null,
       client: {
         label: "Phone",
         deviceType: "mobile",

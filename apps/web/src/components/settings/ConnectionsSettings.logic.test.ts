@@ -231,8 +231,13 @@ describe("canRevokeOtherClients", () => {
 
   it("disables revocation only when a loaded list has no other clients", () => {
     expect(canRevokeOtherClients([])).toBe(false);
-    expect(canRevokeOtherClients([{ current: true }])).toBe(false);
-    expect(canRevokeOtherClients([{ current: true }, { current: false }])).toBe(true);
+    expect(canRevokeOtherClients([{ current: true, kind: "session" }])).toBe(false);
+    expect(
+      canRevokeOtherClients([
+        { current: true, kind: "session" },
+        { current: false, kind: "session" },
+      ]),
+    ).toBe(true);
   });
 });
 
@@ -272,20 +277,31 @@ describe("clientExpiryLabel", () => {
 });
 
 describe("longLivedTokenAccessLabel", () => {
-  // The session only exposes scopes, so the middle access levels are indistinguishable.
   it.each([
-    { scopes: ["orchestration:read"], expected: "Read only" },
-    { scopes: ["orchestration:read", "orchestration:operate"], expected: "Operate" },
-    {
-      scopes: [
-        "orchestration:read",
-        "orchestration:operate",
-        "settings:write",
-        "source-control:write",
-      ],
-      expected: "Full access",
-    },
-  ])("maps $scopes to $expected", ({ scopes, expected }) => {
-    expect(longLivedTokenAccessLabel(scopes)).toBe(expected);
+    { access: "read-only", expected: "Read only" },
+    { access: "approval-required", expected: "Approval required" },
+    { access: "auto-accept-edits", expected: "Auto-accept edits" },
+    { access: "auto", expected: "Auto" },
+    { access: "full-access", expected: "Full access" },
+    { access: null, expected: "Unknown" },
+  ] as const)("maps $access to $expected", ({ access, expected }) => {
+    expect(longLivedTokenAccessLabel(access)).toBe(expected);
+  });
+});
+
+describe("canRevokeOtherClients with long-lived tokens", () => {
+  it("ignores long-lived tokens", () => {
+    expect(
+      canRevokeOtherClients([
+        { current: true, kind: "session" },
+        { current: false, kind: "long-lived-token" },
+      ]),
+    ).toBe(false);
+    expect(
+      canRevokeOtherClients([
+        { current: true, kind: "session" },
+        { current: false, kind: "oauth-grant" },
+      ]),
+    ).toBe(true);
   });
 });
