@@ -88,8 +88,28 @@ Any agent that supports remote MCP servers over HTTP with OAuth can connect. Giv
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
+## Keep an agent signed in
+
+An agent stays connected while you use it. It renews its access in the
+background, so you only approve it again after it has gone unused for the idle
+period, 90 days by default. Agents that signed in before this update sign in once
+more.
+
 ## Remove an agent
 
 Approved agents appear under **Settings → Connections** like other clients.
-Revoke one there to cut off its access immediately. A sign-in lasts 30 days;
-after that the agent asks you to approve it again.
+Revoke one there to cut off its access immediately.
+
+## Long-lived tokens
+
+Services and servers where nobody can approve a browser sign-in, such as a CI job
+or a headless machine, can use a long-lived token instead. Create one with
+`t3 setup-token` on the host, or under **Settings → Connections → Long-lived
+tokens**. Give it a label and a permission level: read-only, approval-required,
+auto-accept-edits, auto, or full-access. Choose the narrowest level the service
+needs.
+
+The token is shown once, so copy it when it appears. It lasts 360 days and does
+not renew; when it expires, create a new one. Send it as a bearer token with
+requests to the MCP URL. Tokens are listed under **Settings → Connections**,
+where you can revoke them. **Revoke other clients** leaves them alone.

@@ -251,7 +251,9 @@ pairings; revoke a device's session to remove its existing access. Command-line
 management is available through `t3 auth --help`.
 
 A session with an open connection stays listed after its access credential
-expires.
+expires. Signed-in apps and agents expire only after an idle period with no use,
+90 days by default. Set `authIdlePeriodDays` (1 to 360) in the server's
+`settings.json` to change it.
 
 To choose a token's permissions, pass `--scope` once for each scope you want:
 
@@ -266,6 +268,10 @@ bearer sessions get every permission, including managing access and T3 Connect.
 A terminal or a full-access agent on the host can reach those as well, so a
 client that should not manage access also needs to go without `terminal:operate`
 and `orchestration:operate`.
+
+For an MCP token that a service uses without anyone signing in, run
+`t3 setup-token` on the host instead. It lasts 360 days and does not renew. See
+[long-lived tokens](./outside-agents.md#long-lived-tokens).
 
 To change an existing client's permissions, create a fresh pairing link with the
 scopes it needs. In a browser opened directly on the environment, open that link
