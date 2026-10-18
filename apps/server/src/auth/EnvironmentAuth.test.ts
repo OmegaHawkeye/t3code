@@ -4,6 +4,7 @@ import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -11,6 +12,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PersistenceErrors from "../persistence/Errors.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -702,5 +704,39 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       } as never);
       expect(verified.sessionId).toBe(bearer.sessionId);
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+  );
+  it.effect("issues renewable sessions to paired browsers and bearer clients only", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const repository = yield* AuthSessions.AuthSessionRepository;
+      const renewableOf = (token: string) =>
+        sessions.verify(token).pipe(
+          Effect.flatMap((verified) => repository.getById({ sessionId: verified.sessionId })),
+          Effect.map((row) => Option.getOrThrow(row).renewable),
+        );
+
+      const browser = yield* serverAuth.createBrowserSession(
+        (yield* serverAuth.issuePairingCredential()).credential,
+        requestMetadata,
+      );
+      const bearer = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        (yield* serverAuth.issuePairingCredential()).credential,
+        undefined,
+        requestMetadata,
+      );
+      const dpop = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        (yield* serverAuth.issuePairingCredential()).credential,
+        undefined,
+        requestMetadata,
+        { proofKeyThumbprint: "test-proof-key" },
+      );
+      const cli = yield* serverAuth.issueSession();
+
+      expect(yield* renewableOf(browser.sessionToken)).toBe(true);
+      expect(yield* renewableOf(bearer.access_token)).toBe(true);
+      expect(yield* renewableOf(dpop.access_token)).toBe(false);
+      expect(yield* renewableOf(cli.token)).toBe(false);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 });

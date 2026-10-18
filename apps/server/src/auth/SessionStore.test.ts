@@ -48,9 +48,10 @@ const layerSessionLifetime = SessionLifetime.layerFixed(IDLE_PERIOD);
 const layerSessionStore = (
   overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
   environmentId = EnvironmentId.make("test-environment"),
+  idlePeriod = IDLE_PERIOD,
 ) =>
   SessionStore.layer.pipe(
-    Layer.provide(layerSessionLifetime),
+    Layer.provide(SessionLifetime.layerFixed(idlePeriod)),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(layerServerEnvironment(environmentId)),
@@ -999,5 +1000,56 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         rowBefore,
       );
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+  it.effect("renews a one-day idle session while it is used", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ renewable: true });
+
+      yield* TestClock.adjust(Duration.hours(13));
+      const renewed = yield* sessions.verify(issued.token);
+      expect(renewed.renewedExpiresAt?.epochMilliseconds).toBe(
+        Duration.toMillis(Duration.sum(Duration.hours(13), Duration.days(1))),
+      );
+      yield* TestClock.adjust(Duration.hours(13));
+
+      expect((yield* sessions.verify(issued.token)).sessionId).toBe(issued.sessionId);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(layerSessionStore(undefined, undefined, Duration.days(1)), TestClock.layer()),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { case: "renewable", reason: "renewable" },
+    { case: "dpop", reason: "method" },
+    { case: "revoked", reason: "revoked" },
+    { case: "expired", reason: "expired" },
+  ] as const)(
+    "refuses to derive an access token from a $case session row",
+    ({ case: kind, reason }) =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const issued = yield* sessions.issue(
+          kind === "renewable"
+            ? { method: "bearer-access-token", renewable: true }
+            : kind === "dpop"
+              ? relaySessionInput
+              : { method: "bearer-access-token", ttl: Duration.hours(1) },
+        );
+        if (kind === "revoked") yield* sessions.revoke(issued.sessionId);
+        if (kind === "expired") yield* TestClock.adjust(Duration.hours(2));
+
+        const error = yield* Effect.flip(
+          sessions.issueAccessToken({ sessionId: issued.sessionId, ttl: Duration.hours(1) }),
+        );
+
+        expect(error).toMatchObject({
+          _tag: "SessionAccessTokenRefusedError",
+          sessionId: issued.sessionId,
+          reason,
+        });
+      }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 });

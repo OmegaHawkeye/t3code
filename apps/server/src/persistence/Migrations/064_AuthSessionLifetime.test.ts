@@ -36,6 +36,11 @@ layer("064_AuthSessionLifetime", (it) => {
         subject: "one-time-token",
       });
       yield* insertSession(sql, {
+        id: "paired",
+        method: "bearer-access-token",
+        subject: "one-time-token",
+      });
+      yield* insertSession(sql, {
         id: "cli",
         method: "bearer-access-token",
         subject: "cli-issued-session",
@@ -59,7 +64,8 @@ layer("064_AuthSessionLifetime", (it) => {
           ["agent", 0, "oauth-grant", null],
           ["cli", 0, "session", null],
           ["cookie", 1, "session", null],
-          ["mobile", 1, "session", null],
+          ["mobile", 0, "session", null],
+          ["paired", 1, "session", null],
         ],
       );
     }),

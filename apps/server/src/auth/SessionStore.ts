@@ -350,6 +350,19 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+// Derived tokens must expire on their own claim, which `verify` only enforces for fixed rows.
+export class SessionAccessTokenRefusedError extends Schema.TaggedError<SessionAccessTokenRefusedError>()(
+  "SessionAccessTokenRefusedError",
+  {
+    sessionId: AuthSessionId,
+    reason: Schema.Literals(["unknown", "renewable", "method", "revoked", "expired"]),
+  },
+) {
+  override get message(): string {
+    return "Refused to issue an access token for this session.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -359,6 +372,7 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  SessionAccessTokenRefusedError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -440,8 +454,9 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
-// Renewal writes at most once per day so a busy client doesn't write on every request.
-const RENEWAL_THROTTLE = Duration.days(1);
+// Renewal writes at most once per day so a busy client doesn't write on every request;
+// short idle periods use half the period so they still renew.
+const MAX_RENEWAL_THROTTLE = Duration.days(1);
 
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
@@ -798,14 +813,16 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<DateTime.Utc | undefined> =>
     Effect.gen(function* () {
       const idlePeriod = yield* sessionLifetime.idlePeriod;
+      const idleMillis = Duration.toMillis(idlePeriod);
+      const throttleMillis = Math.min(Duration.toMillis(MAX_RENEWAL_THROTTLE), idleMillis / 2);
       const remaining = currentExpiresAt.epochMilliseconds - now.epochMilliseconds;
-      if (remaining >= Duration.toMillis(idlePeriod) - Duration.toMillis(RENEWAL_THROTTLE)) {
+      if (remaining >= idleMillis - throttleMillis) {
         return undefined;
       }
       const renewedExpiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(idlePeriod) });
       return yield* authSessions.setExpiresAt({ sessionId, expiresAt: renewedExpiresAt }).pipe(
         Effect.as(renewedExpiresAt),
-        Effect.catchCause((cause) =>
+        Effect.catch((cause) =>
           Effect.logWarning("Failed to renew session expiry.").pipe(
             Effect.annotateLogs({ sessionId, cause }),
             Effect.as(undefined),
@@ -821,12 +838,21 @@ export const make = Effect.gen(function* () {
       .getById({ sessionId })
       .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
     if (Option.isNone(row)) {
-      return yield* new SessionCredentialIssueError({
-        sessionId,
-        cause: new UnknownSessionTokenError({ sessionId }),
-      });
+      return yield* new SessionAccessTokenRefusedError({ sessionId, reason: "unknown" });
     }
     const issuedAt = yield* DateTime.now;
+    const refusal = row.value.renewable
+      ? "renewable"
+      : row.value.method !== "bearer-access-token"
+        ? "method"
+        : row.value.revokedAt !== null
+          ? "revoked"
+          : row.value.expiresAt.epochMilliseconds <= issuedAt.epochMilliseconds
+            ? "expired"
+            : undefined;
+    if (refusal !== undefined) {
+      return yield* new SessionAccessTokenRefusedError({ sessionId, reason: refusal });
+    }
     const expiresAt = DateTime.add(issuedAt, { milliseconds: Duration.toMillis(ttl) });
     const token = yield* signClaims({
       v: 1,

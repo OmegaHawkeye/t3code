@@ -13,13 +13,14 @@ export default Effect.gen(function* () {
       ALTER TABLE auth_sessions
       ADD COLUMN renewable INTEGER NOT NULL DEFAULT 0
     `;
-    // Only interactive client sessions renew; CLI-issued and MCP credentials keep a fixed expiry.
+    // Only interactive client sessions renew. CLI-issued and MCP credentials keep a fixed expiry,
+    // and DPoP tokens stay short-lived because clients re-exchange them.
     yield* sql`
       UPDATE auth_sessions
       SET renewable = 1
       WHERE method = 'browser-session-cookie'
          OR (
-           method IN ('bearer-access-token', 'dpop-access-token')
+           method = 'bearer-access-token'
            AND subject NOT IN ('mcp-client', 'cli-issued-session')
          )
     `;
