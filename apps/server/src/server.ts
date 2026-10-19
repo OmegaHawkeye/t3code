@@ -122,10 +122,19 @@ import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as LinearAutopilotClient from "./linear/LinearAutopilotClient.ts";
+import * as LinearAutopilotApproval from "./linear/LinearAutopilotApproval.ts";
+import * as LinearAutopilotDispatcher from "./linear/LinearAutopilotDispatcher.ts";
+import * as LinearAutopilotHttp from "./linear/LinearAutopilotHttp.ts";
+import * as LinearAutopilotOperator from "./linear/LinearAutopilotOperator.ts";
+import * as LinearAutopilotPhaseLaunch from "./linear/LinearAutopilotPhaseLaunch.ts";
+import * as LinearAutopilotReconciler from "./linear/LinearAutopilotReconciler.ts";
 import * as LinearAutopilotPoll from "./linear/LinearAutopilotPoll.ts";
 import * as LinearAutopilotRun from "./linear/LinearAutopilotRun.ts";
 import * as LinearAutopilotToken from "./linear/LinearAutopilotToken.ts";
 import * as LinearAutopilotWorker from "./linear/LinearAutopilotWorker.ts";
+import * as LinearAutopilotIntake from "./persistence/LinearAutopilotIntake.ts";
+import * as LinearAutopilotPhaseAttempts from "./persistence/LinearAutopilotPhaseAttempts.ts";
+import * as LinearAutopilotRuns from "./persistence/LinearAutopilotRuns.ts";
 import * as LinearAutopilotPollState from "./persistence/LinearAutopilotPollState.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
@@ -490,7 +499,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
-const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+const layerOrchestrationV2RuntimeBase = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),
@@ -503,6 +512,11 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
       Layer.provide(RuntimeLayer.layerProjectService),
     ),
   ),
+);
+
+const layerOrchestrationV2Runtime = LinearAutopilotPhaseLaunch.layer.pipe(
+  Layer.provideMerge(LinearAutopilotPhaseAttempts.layer),
+  Layer.provideMerge(layerOrchestrationV2RuntimeBase),
 );
 
 const layerOrchestrationApplication = CheckpointDiffQuery.layer.pipe(
@@ -518,6 +532,36 @@ const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService));
 
+const layerLinearAutopilotRun = LinearAutopilotRun.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(LinearAutopilotClient.layer, LinearAutopilotToken.layer)),
+);
+
+const layerLinearAutopilotApproval = LinearAutopilotApproval.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(LinearAutopilotRuns.layer, layerLinearAutopilotRun)),
+);
+
+const layerLinearAutopilotOperator = LinearAutopilotOperator.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      LinearAutopilotIntake.layer,
+      LinearAutopilotRuns.layer,
+      LinearAutopilotPhaseAttempts.layer,
+      layerLinearAutopilotApproval,
+    ),
+  ),
+);
+
+const layerLinearAutopilotReconciler = LinearAutopilotReconciler.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      LinearAutopilotRuns.layer,
+      LinearAutopilotPhaseAttempts.layer,
+      LinearAutopilotIntake.layer,
+      layerLinearAutopilotApproval,
+    ),
+  ),
+);
+
 const layerLinearAutopilotWorker = Layer.effectDiscard(
   Effect.gen(function* () {
     const worker = yield* LinearAutopilotWorker.LinearAutopilotWorker;
@@ -525,10 +569,14 @@ const layerLinearAutopilotWorker = Layer.effectDiscard(
   }),
 ).pipe(
   Layer.provide(LinearAutopilotWorker.layer),
+  Layer.provide(layerLinearAutopilotReconciler),
+  Layer.provide(LinearAutopilotDispatcher.layer),
   Layer.provide(LinearAutopilotPoll.layer),
   Layer.provide(LinearAutopilotRun.layer),
   Layer.provide(LinearAutopilotClient.layer),
   Layer.provide(LinearAutopilotToken.layer),
+  Layer.provide(LinearAutopilotIntake.layer),
+  Layer.provide(LinearAutopilotRuns.layer),
   Layer.provide(LinearAutopilotPollState.layer),
 );
 
@@ -702,6 +750,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
+      Layer.provide(LinearAutopilotHttp.layer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
@@ -725,6 +774,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),
+  Layer.provide(layerLinearAutopilotOperator),
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   Layer.provide(PreviewBrowser.layer),
   Layer.provide(PreviewAutomationBroker.layer),

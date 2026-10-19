@@ -27,6 +27,15 @@ it("reports eligible issues in shadow mode without authorizing enqueue", () => {
   });
 });
 
+it("classifies eligible queue-mode issues for persistence without launching agents", () => {
+  assert.deepStrictEqual(evaluateLinearAutopilotIntake({ ...config, mode: "queue" }, issue), {
+    mode: "queue",
+    eligible: true,
+    reason: "eligible",
+    projectId: ProjectId.make("t3-project"),
+  });
+});
+
 it("rejects issues outside the configured team before project resolution", () => {
   assert.deepStrictEqual(
     evaluateLinearAutopilotIntake(config, { ...issue, teamId: "other-team" }),

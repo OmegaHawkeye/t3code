@@ -3,11 +3,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { PersistenceSqlError } from "../persistence/Errors.ts";
+import type { PersistenceDecodeError, PersistenceSqlError } from "../persistence/Errors.ts";
 import * as LinearAutopilotClient from "./LinearAutopilotClient.ts";
 import * as LinearAutopilotIntakePolicy from "./LinearAutopilotIntakePolicy.ts";
 import * as LinearAutopilotRun from "./LinearAutopilotRun.ts";
 import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
+import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
 import * as LinearAutopilotPollState from "../persistence/LinearAutopilotPollState.ts";
 
 const INITIAL_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
@@ -18,6 +19,7 @@ export interface LinearAutopilotShadowPollResult {
   readonly pagesRead: number;
   readonly issuesEvaluated: number;
   readonly eligible: number;
+  readonly queued: number;
   readonly decisionsByReason: Readonly<Record<string, number>>;
   readonly incomplete: boolean;
 }
@@ -33,6 +35,18 @@ export class LinearAutopilotPoll extends Context.Service<
       LinearAutopilotShadowPollResult,
       | LinearAutopilotToken.LinearAutopilotTokenError
       | LinearAutopilotClient.LinearAutopilotClientError
+      | PersistenceDecodeError
+      | PersistenceSqlError
+    >;
+    /** Queues only issues accepted by the explicit team/state/label/project policy. */
+    readonly pollQueue: (input: {
+      readonly config: LinearAutopilotIntakePolicy.LinearAutopilotIntakeConfig;
+      readonly nowMs: number;
+    }) => Effect.Effect<
+      LinearAutopilotShadowPollResult,
+      | LinearAutopilotToken.LinearAutopilotTokenError
+      | LinearAutopilotClient.LinearAutopilotClientError
+      | PersistenceDecodeError
       | PersistenceSqlError
     >;
   }
@@ -41,14 +55,21 @@ export class LinearAutopilotPoll extends Context.Service<
 const make = Effect.gen(function* () {
   const runService = yield* LinearAutopilotRun.LinearAutopilotRun;
   const pollState = yield* LinearAutopilotPollState.LinearAutopilotPollStateRepository;
+  const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
 
-  const pollShadow: LinearAutopilotPoll["Service"]["pollShadow"] = ({ config, nowMs }) =>
+  const pollConfigured = (
+    config: LinearAutopilotIntakePolicy.LinearAutopilotIntakeConfig,
+    nowMs: number,
+    queueEligible: boolean,
+  ) =>
     Effect.gen(function* () {
-      if (config.mode !== "shadow" || config.teamId.length === 0) {
+      const requiredMode = queueEligible ? "queue" : "shadow";
+      if (config.mode !== requiredMode || config.teamId.length === 0) {
         return {
           pagesRead: 0,
           issuesEvaluated: 0,
           eligible: 0,
+          queued: 0,
           decisionsByReason: {},
           incomplete: false,
         };
@@ -66,6 +87,7 @@ const make = Effect.gen(function* () {
       let pagesRead = 0;
       let issuesEvaluated = 0;
       let eligible = 0;
+      let queued = 0;
       let hasNextPage = true;
       const decisionsByReason: Record<string, number> = {};
 
@@ -84,7 +106,24 @@ const make = Effect.gen(function* () {
             projectId: issue.project?.id ?? null,
           });
           decisionsByReason[decision.reason] = (decisionsByReason[decision.reason] ?? 0) + 1;
-          if (decision.eligible) eligible += 1;
+          if (decision.eligible) {
+            eligible += 1;
+            if (queueEligible) {
+              const inserted = yield* intake.ingest({
+                eventId: null,
+                workspaceId: issue.team.id,
+                issueId: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                url: issue.url,
+                description: issue.description,
+                projectId: decision.projectId,
+                sourceUpdatedAt: DateTime.formatIso(issue.updatedAt),
+                observedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+              });
+              if (inserted) queued += 1;
+            }
+          }
         }
         hasNextPage = page.hasNextPage;
         if (hasNextPage && (page.endCursor === null || page.endCursor === after)) {
@@ -104,10 +143,15 @@ const make = Effect.gen(function* () {
         });
       }
 
-      return { pagesRead, issuesEvaluated, eligible, decisionsByReason, incomplete };
+      return { pagesRead, issuesEvaluated, eligible, queued, decisionsByReason, incomplete };
     });
 
-  return LinearAutopilotPoll.of({ pollShadow });
+  const pollShadow: LinearAutopilotPoll["Service"]["pollShadow"] = ({ config, nowMs }) =>
+    pollConfigured(config, nowMs, false);
+  const pollQueue: LinearAutopilotPoll["Service"]["pollQueue"] = ({ config, nowMs }) =>
+    pollConfigured(config, nowMs, true);
+
+  return LinearAutopilotPoll.of({ pollShadow, pollQueue });
 });
 
 export const layer = Layer.effect(LinearAutopilotPoll, make);

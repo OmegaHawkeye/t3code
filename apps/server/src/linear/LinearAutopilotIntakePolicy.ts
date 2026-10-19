@@ -2,7 +2,7 @@ import type { ProjectId } from "@t3tools/contracts";
 
 export interface LinearAutopilotIntakeConfig {
   /** Disabled is the default; shadow mode evaluates candidates without enqueueing work. */
-  readonly mode: "disabled" | "shadow";
+  readonly mode: "disabled" | "shadow" | "queue";
   readonly teamId: string;
   readonly readyStateIds: ReadonlyArray<string>;
   readonly triggerLabelIds: ReadonlyArray<string>;
@@ -28,7 +28,7 @@ export type LinearAutopilotIntakeReason =
 
 export type LinearAutopilotIntakeDecision =
   | {
-      readonly mode: "disabled" | "shadow";
+      readonly mode: "disabled" | "shadow" | "queue";
       readonly eligible: false;
       readonly reason: Exclude<LinearAutopilotIntakeReason, "eligible">;
     }
@@ -37,11 +37,17 @@ export type LinearAutopilotIntakeDecision =
       readonly eligible: true;
       readonly reason: "eligible";
       readonly projectId: ProjectId;
+    }
+  | {
+      readonly mode: "queue";
+      readonly eligible: true;
+      readonly reason: "eligible";
+      readonly projectId: ProjectId;
     };
 
 /**
  * Evaluates only explicitly configured Linear scope. This function has no side effects;
- * in shadow mode callers may report the decision but must not enqueue or launch work.
+ * Shadow mode reports decisions; queue mode allows only a durable outbox enqueue.
  */
 export const evaluateLinearAutopilotIntake = (
   config: LinearAutopilotIntakeConfig,
@@ -64,5 +70,5 @@ export const evaluateLinearAutopilotIntake = (
       : undefined;
   if (projectId === undefined) return reject("project-not-mapped");
 
-  return { mode: "shadow", eligible: true, reason: "eligible", projectId };
+  return { mode: config.mode, eligible: true, reason: "eligible", projectId };
 };

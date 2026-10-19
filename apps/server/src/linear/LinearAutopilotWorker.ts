@@ -5,7 +5,9 @@ import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 
 import * as ServerSettings from "../serverSettings.ts";
+import * as LinearAutopilotDispatcher from "./LinearAutopilotDispatcher.ts";
 import * as LinearAutopilotPoll from "./LinearAutopilotPoll.ts";
+import * as LinearAutopilotReconciler from "./LinearAutopilotReconciler.ts";
 
 const POLL_INTERVAL = "5 minutes";
 
@@ -20,27 +22,48 @@ export class LinearAutopilotWorker extends Context.Service<
 const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const poll = yield* LinearAutopilotPoll.LinearAutopilotPoll;
+  const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
+  const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
 
   const runOnce = settings.getSettings.pipe(
     Effect.flatMap((current) => {
       const config = current.linearAutopilot;
-      if (config.mode !== "shadow") return Effect.void;
+      if (config.mode === "disabled") return Effect.void;
       return Effect.flatMap(
         Effect.clockWith((clock) => clock.currentTimeMillis),
-        (nowMs) =>
-          poll.pollShadow({ config, nowMs }).pipe(
+        (nowMs) => {
+          const pollEffect =
+            config.mode === "shadow"
+              ? poll.pollShadow({ config, nowMs })
+              : poll.pollQueue({ config, nowMs });
+          return pollEffect.pipe(
             Effect.tap((result) =>
-              Effect.logInfo("Linear autopilot shadow poll completed", {
+              Effect.logInfo("Linear autopilot intake poll completed", {
                 pagesRead: result.pagesRead,
                 issuesEvaluated: result.issuesEvaluated,
                 eligible: result.eligible,
+                queued: result.queued,
                 incomplete: result.incomplete,
               }),
             ),
-          ),
+            Effect.flatMap(() =>
+              config.mode === "queue"
+                ? dispatcher.dispatchPending(20).pipe(
+                    Effect.tap((result) =>
+                      Effect.logInfo("Linear autopilot queue dispatch completed", result),
+                    ),
+                    Effect.flatMap(() => reconciler.reconcile()),
+                    Effect.tap((result) =>
+                      Effect.logInfo("Linear autopilot phase reconciliation completed", result),
+                    ),
+                  )
+                : Effect.void,
+            ),
+          );
+        },
       );
     }),
-    Effect.catch(() => Effect.logWarning("Linear autopilot shadow poll failed")),
+    Effect.catchCause(() => Effect.logWarning("Linear autopilot worker tick failed")),
     Effect.asVoid,
   );
 
