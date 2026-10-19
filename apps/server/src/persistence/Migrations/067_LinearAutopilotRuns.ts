@@ -22,6 +22,8 @@ export default Effect.gen(function* () {
       worktree_id TEXT,
       approval_plan_hash TEXT,
       approval_policy_version TEXT,
+      approval_project_id TEXT,
+      approval_base_ref TEXT,
       approved_by TEXT,
       approved_at TEXT,
       created_at TEXT NOT NULL,

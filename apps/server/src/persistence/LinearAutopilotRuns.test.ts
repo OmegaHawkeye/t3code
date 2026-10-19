@@ -3,6 +3,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { ProjectId } from "@t3tools/contracts";
+
 import * as LinearAutopilotIntake from "./LinearAutopilotIntake.ts";
 import * as LinearAutopilotRuns from "./LinearAutopilotRuns.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
@@ -103,6 +105,7 @@ layer("LinearAutopilotRunRepository", (it) => {
       yield* seedIssue;
       const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
       const { run } = yield* runs.createOrGetActive(runInput);
+      const approvedProjectId = ProjectId.make("trusted-project-1");
 
       assert.isTrue(
         yield* runs.transition({
@@ -137,6 +140,8 @@ layer("LinearAutopilotRunRepository", (it) => {
           updatedAt: now,
           approvalPlanHash: "plan-hash-1",
           approvalPolicyVersion: "policy-1",
+          approvalProjectId: approvedProjectId,
+          approvalBaseRef: "main",
         }),
       );
       assert.isFalse(
@@ -153,6 +158,8 @@ layer("LinearAutopilotRunRepository", (it) => {
           expectedRevision: 3,
           planHash: "changed-plan",
           policyVersion: "policy-1",
+          projectId: approvedProjectId,
+          baseRef: "main",
           approvedBy: "operator-1",
           approvedAt: now,
         }),
@@ -163,6 +170,8 @@ layer("LinearAutopilotRunRepository", (it) => {
           expectedRevision: 3,
           planHash: "plan-hash-1",
           policyVersion: "policy-1",
+          projectId: approvedProjectId,
+          baseRef: "main",
           approvedBy: "operator-1",
           approvedAt: now,
         }),
@@ -171,6 +180,26 @@ layer("LinearAutopilotRunRepository", (it) => {
         yield* runs.transition({
           runId: run.runId,
           expectedRevision: 4,
+          nextState: "implementing",
+          updatedAt: now,
+          approvalPlanHash: "changed-plan",
+          approvalPolicyVersion: "changed-policy",
+          approvalProjectId: ProjectId.make("trusted-project-2"),
+          approvalBaseRef: "feature",
+        }),
+      );
+      const [approved] = yield* runs.listRecoverable(10);
+      assert.equal(approved?.approvalPlanHash, "plan-hash-1");
+      assert.equal(approved?.approvalPolicyVersion, "policy-1");
+      assert.equal(approved?.approvalProjectId, approvedProjectId);
+      assert.equal(approved?.approvalBaseRef, "main");
+      assert.equal(approved?.approvedBy, "operator-1");
+      assert.equal(approved?.approvedAt?.toString(), now.toString());
+
+      assert.isTrue(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 5,
           nextState: "paused",
           updatedAt: now,
         }),
@@ -178,7 +207,7 @@ layer("LinearAutopilotRunRepository", (it) => {
       assert.isTrue(
         yield* runs.transition({
           runId: run.runId,
-          expectedRevision: 5,
+          expectedRevision: 6,
           nextState: "queued",
           updatedAt: now,
         }),
@@ -186,7 +215,7 @@ layer("LinearAutopilotRunRepository", (it) => {
       assert.isTrue(
         yield* runs.transition({
           runId: run.runId,
-          expectedRevision: 6,
+          expectedRevision: 7,
           nextState: "planning",
           updatedAt: now,
         }),
@@ -195,6 +224,8 @@ layer("LinearAutopilotRunRepository", (it) => {
       const [replanned] = yield* runs.listRecoverable(10);
       assert.equal(replanned?.approvalPlanHash, null);
       assert.equal(replanned?.approvalPolicyVersion, null);
+      assert.equal(replanned?.approvalProjectId, null);
+      assert.equal(replanned?.approvalBaseRef, null);
       assert.equal(replanned?.approvedBy, null);
       assert.equal(replanned?.approvedAt, null);
     }),

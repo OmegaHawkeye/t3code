@@ -10,6 +10,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
+import { ProjectId } from "@t3tools/contracts";
+
 import { type PersistenceSqlError, toPersistenceSqlError } from "./Errors.ts";
 
 export const LinearAutopilotRunState = Schema.Literals([
@@ -41,6 +43,8 @@ export const LinearAutopilotRun = Schema.Struct({
   worktreeId: Schema.NullOr(Schema.String),
   approvalPlanHash: Schema.NullOr(Schema.String),
   approvalPolicyVersion: Schema.NullOr(Schema.String),
+  approvalProjectId: Schema.NullOr(ProjectId),
+  approvalBaseRef: Schema.NullOr(Schema.String),
   approvedBy: Schema.NullOr(Schema.String),
   approvedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
@@ -68,12 +72,16 @@ const TransitionRequest = Schema.Struct({
   worktreeId: Schema.optional(Schema.NullOr(Schema.String)),
   approvalPlanHash: Schema.optional(Schema.NullOr(Schema.String)),
   approvalPolicyVersion: Schema.optional(Schema.NullOr(Schema.String)),
+  approvalProjectId: Schema.optional(Schema.NullOr(ProjectId)),
+  approvalBaseRef: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(255)))),
 });
 const ApprovalRequest = Schema.Struct({
   runId: Schema.String,
   expectedRevision: Schema.Int,
   planHash: Schema.String.pipe(Schema.maxLength(128)),
   policyVersion: Schema.String.pipe(Schema.maxLength(128)),
+  projectId: ProjectId,
+  baseRef: Schema.String.pipe(Schema.maxLength(255)),
   approvedBy: Schema.String.pipe(Schema.maxLength(128)),
   approvedAt: Schema.DateTimeUtcFromString,
 });
@@ -143,6 +151,8 @@ const make = Effect.gen(function* () {
         worktree_id AS "worktreeId",
         approval_plan_hash AS "approvalPlanHash",
         approval_policy_version AS "approvalPolicyVersion",
+        approval_project_id AS "approvalProjectId",
+        approval_base_ref AS "approvalBaseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -172,6 +182,8 @@ const make = Effect.gen(function* () {
         worktree_id AS "worktreeId",
         approval_plan_hash AS "approvalPlanHash",
         approval_policy_version AS "approvalPolicyVersion",
+        approval_project_id AS "approvalProjectId",
+        approval_base_ref AS "approvalBaseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -207,6 +219,8 @@ const make = Effect.gen(function* () {
         worktree_id AS "worktreeId",
         approval_plan_hash AS "approvalPlanHash",
         approval_policy_version AS "approvalPolicyVersion",
+        approval_project_id AS "approvalProjectId",
+        approval_base_ref AS "approvalBaseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -231,6 +245,8 @@ const make = Effect.gen(function* () {
         worktree_id AS "worktreeId",
         approval_plan_hash AS "approvalPlanHash",
         approval_policy_version AS "approvalPolicyVersion",
+        approval_project_id AS "approvalProjectId",
+        approval_base_ref AS "approvalBaseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -245,7 +261,7 @@ const make = Effect.gen(function* () {
   const updateRun = SqlSchema.findAll({
     Request: TransitionRequest,
     Result: Schema.Struct({ runId: Schema.String }),
-    execute: ({ runId, expectedRevision, nextState, updatedAt, threadId, worktreeId, approvalPlanHash, approvalPolicyVersion }) => sql`
+    execute: ({ runId, expectedRevision, nextState, updatedAt, threadId, worktreeId, approvalPlanHash, approvalPolicyVersion, approvalProjectId, approvalBaseRef }) => sql`
       UPDATE linear_autopilot_runs
       SET state = ${nextState},
           revision = revision + 1,
@@ -254,11 +270,23 @@ const make = Effect.gen(function* () {
           worktree_id = COALESCE(${worktreeId ?? null}, worktree_id),
           approval_plan_hash = CASE
             WHEN ${nextState} IN ('queued', 'planning') THEN NULL
-            ELSE COALESCE(${approvalPlanHash ?? null}, approval_plan_hash)
+            WHEN ${nextState} = 'needs_approval' THEN ${approvalPlanHash ?? null}
+            ELSE approval_plan_hash
           END,
           approval_policy_version = CASE
             WHEN ${nextState} IN ('queued', 'planning') THEN NULL
-            ELSE COALESCE(${approvalPolicyVersion ?? null}, approval_policy_version)
+            WHEN ${nextState} = 'needs_approval' THEN ${approvalPolicyVersion ?? null}
+            ELSE approval_policy_version
+          END,
+          approval_project_id = CASE
+            WHEN ${nextState} IN ('queued', 'planning') THEN NULL
+            WHEN ${nextState} = 'needs_approval' THEN ${approvalProjectId ?? null}
+            ELSE approval_project_id
+          END,
+          approval_base_ref = CASE
+            WHEN ${nextState} IN ('queued', 'planning') THEN NULL
+            WHEN ${nextState} = 'needs_approval' THEN ${approvalBaseRef ?? null}
+            ELSE approval_base_ref
           END,
           approved_by = CASE WHEN ${nextState} IN ('queued', 'planning') THEN NULL ELSE approved_by END,
           approved_at = CASE WHEN ${nextState} IN ('queued', 'planning') THEN NULL ELSE approved_at END
@@ -270,7 +298,7 @@ const make = Effect.gen(function* () {
   const approveRun = SqlSchema.findAll({
     Request: ApprovalRequest,
     Result: Schema.Struct({ runId: Schema.String }),
-    execute: ({ runId, expectedRevision, planHash, policyVersion, approvedBy, approvedAt }) => sql`
+    execute: ({ runId, expectedRevision, planHash, policyVersion, projectId, baseRef, approvedBy, approvedAt }) => sql`
       UPDATE linear_autopilot_runs
       SET state = 'approved',
           revision = revision + 1,
@@ -282,6 +310,8 @@ const make = Effect.gen(function* () {
         AND state = 'needs_approval'
         AND approval_plan_hash = ${planHash}
         AND approval_policy_version = ${policyVersion}
+        AND approval_project_id = ${projectId}
+        AND approval_base_ref = ${baseRef}
       RETURNING run_id AS "runId"
     `,
   });
@@ -347,7 +377,10 @@ const make = Effect.gen(function* () {
             input.nextState === "approved" ||
             !allowedTransitions[state].includes(input.nextState) ||
             (input.nextState === "needs_approval" &&
-              (!input.approvalPlanHash || !input.approvalPolicyVersion))
+              (!input.approvalPlanHash ||
+                !input.approvalPolicyVersion ||
+                !input.approvalProjectId ||
+                !input.approvalBaseRef))
           )
             return false;
           const updated = yield* updateRun(input).pipe(
