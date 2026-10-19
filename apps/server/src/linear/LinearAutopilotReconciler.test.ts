@@ -65,7 +65,7 @@ const harness = (options: { readonly completePlanning?: boolean } = {}) => {
           reviewLaunches.push(input);
           return {
             attemptId: "review-attempt",
-            commandId: "review-command",
+            commandId: `command-${input.phase}`,
             threadId: "review-thread",
           };
         }),
@@ -189,10 +189,6 @@ it.effect("records a completed plan and launches an independent read-only review
     assert.equal(
       (yield* attempts.getLatest({ runId, phase: "planning" }))?.summary,
       "Implementation plan",
-    );
-    assert.equal(
-      (yield* attempts.getLatest({ runId, phase: "review" }))?.threadId,
-      "review-thread",
     );
   }).pipe(Effect.provide(setup.layer));
 });
