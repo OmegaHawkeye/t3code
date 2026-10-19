@@ -408,6 +408,7 @@ export class SessionStore extends Context.Service<
     readonly issueAccessToken: (input: {
       readonly sessionId: AuthSessionId;
       readonly ttl: Duration.Duration;
+      readonly issuedAt?: DateTime.Utc;
     }) => Effect.Effect<
       {
         readonly token: string;
@@ -852,9 +853,9 @@ export const make = Effect.gen(function* () {
       const renewedExpiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(idlePeriod) });
       return yield* authSessions.setExpiresAt({ sessionId, expiresAt: renewedExpiresAt }).pipe(
         Effect.as(renewedExpiresAt),
-        Effect.catch((cause) =>
+        Effect.catch(() =>
           Effect.logWarning("Failed to renew session expiry.").pipe(
-            Effect.annotateLogs({ sessionId, cause }),
+            Effect.annotateLogs({ sessionId }),
             Effect.as(undefined),
           ),
         ),
@@ -863,14 +864,14 @@ export const make = Effect.gen(function* () {
 
   const issueAccessToken: SessionStore["Service"]["issueAccessToken"] = Effect.fn(
     "SessionStore.issueAccessToken",
-  )(function* ({ sessionId, ttl }) {
+  )(function* ({ sessionId, ttl, issuedAt: requestedIssuedAt }) {
     const row = yield* authSessions
       .getById({ sessionId })
       .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
     if (Option.isNone(row)) {
       return yield* new SessionAccessTokenRefusedError({ sessionId, reason: "unknown" });
     }
-    const issuedAt = yield* DateTime.now;
+    const issuedAt = requestedIssuedAt ?? (yield* DateTime.now);
     const refusal = row.value.renewable
       ? "renewable"
       : row.value.method !== "bearer-access-token"

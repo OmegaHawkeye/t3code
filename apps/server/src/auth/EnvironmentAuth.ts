@@ -595,6 +595,7 @@ export class EnvironmentAuth extends Context.Service<
      */
     readonly renewMcpClientSession: (
       sessionId: AuthSessionId,
+      issuedAt?: DateTime.Utc,
     ) => Effect.Effect<
       McpClientGrantToken,
       ServerAuthInvalidCredentialError | ServerAuthInternalError
@@ -1019,11 +1020,11 @@ export const make = Effect.gen(function* () {
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
-                // DPoP tokens stay short-lived by design; only bearer clients renew on use.
+                // Keep DPoP proof binding while letting active paired clients renew on use.
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
+                      renewable: true,
                     }
                   : { renewable: true }),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
@@ -1382,9 +1383,13 @@ export const make = Effect.gen(function* () {
 
   const renewMcpClientSession: EnvironmentAuth["Service"]["renewMcpClientSession"] = Effect.fn(
     "EnvironmentAuth.renewMcpClientSession",
-  )(function* (sessionId) {
+  )(function* (sessionId, issuedAt) {
     const issued = yield* sessions
-      .issueAccessToken({ sessionId, ttl: MCP_CLIENT_ACCESS_TOKEN_TTL })
+      .issueAccessToken({
+        sessionId,
+        ttl: MCP_CLIENT_ACCESS_TOKEN_TTL,
+        ...(issuedAt === undefined ? {} : { issuedAt }),
+      })
       .pipe(
         Effect.mapError((cause) =>
           cause._tag === "SessionAccessTokenRefusedError"
@@ -1394,8 +1399,8 @@ export const make = Effect.gen(function* () {
             : new ServerAuthSessionTokenIssueError({ cause }),
         ),
       );
-    const now = yield* DateTime.now;
-    const grantExpiresAt = DateTime.add(now, {
+    const renewalTime = issuedAt ?? (yield* DateTime.now);
+    const grantExpiresAt = DateTime.add(renewalTime, {
       milliseconds: Duration.toMillis(yield* sessionLifetime.idlePeriod),
     });
     yield* authSessions

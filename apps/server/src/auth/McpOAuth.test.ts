@@ -694,6 +694,7 @@ it.effect("returns the same new pair to a second refresh within 30 seconds", () 
     const first = yield* refresh(clientId, token.refresh_token);
     yield* TestClock.adjust(Duration.seconds(10));
     const second = yield* refresh(clientId, token.refresh_token);
+    expect(second.access_token).toBe(first.access_token);
     expect(second.refresh_token).toBe(first.refresh_token);
     expect(second.expires_in).toBe(3600);
     const firstSession = yield* authenticate(first);
@@ -712,6 +713,7 @@ it.effect("lets only one of two concurrent refreshes rotate", () =>
       [refresh(clientId, token.refresh_token), refresh(clientId, token.refresh_token)],
       { concurrency: "unbounded" },
     );
+    expect(left.access_token).toBe(right.access_token);
     expect(left.refresh_token).toBe(right.refresh_token);
     expect(yield* authenticates(left)).toBe(true);
     expect(yield* authenticates(right)).toBe(true);

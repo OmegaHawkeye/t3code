@@ -707,7 +707,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect(verified.sessionId).toBe(bearer.sessionId);
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
   );
-  it.effect("issues renewable sessions to paired browsers and bearer clients only", () =>
+  it.effect("issues renewable sessions to paired browser, bearer and DPoP clients", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sessions = yield* SessionStore.SessionStore;
@@ -737,7 +737,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
 
       expect(yield* renewableOf(browser.sessionToken)).toBe(true);
       expect(yield* renewableOf(bearer.access_token)).toBe(true);
-      expect(yield* renewableOf(dpop.access_token)).toBe(false);
+      expect(yield* renewableOf(dpop.access_token)).toBe(true);
       expect(yield* renewableOf(cli.token)).toBe(false);
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );

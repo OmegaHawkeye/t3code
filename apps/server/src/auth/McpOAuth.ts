@@ -495,20 +495,23 @@ const make = Effect.gen(function* () {
     refresh_token: refreshToken,
   });
 
-  const renewGrant = (sessionId: AuthMcpRefreshTokens.AuthMcpRefreshTokenRecord["sessionId"]) =>
+  const renewGrant = (
+    sessionId: AuthMcpRefreshTokens.AuthMcpRefreshTokenRecord["sessionId"],
+    issuedAt: DateTime.Utc,
+  ) =>
     environmentAuth
-      .renewMcpClientSession(sessionId)
+      .renewMcpClientSession(sessionId, issuedAt)
       .pipe(
         Effect.catch((cause) =>
           (EnvironmentAuth.isServerAuthCredentialError(cause)
             ? Effect.void
-            : Effect.logError("Could not renew an MCP client grant.", { cause })
+            : Effect.logError("Could not renew an MCP client grant.")
           ).pipe(Effect.andThen(Effect.fail(invalidRefresh()))),
         ),
       );
 
-  const repositoryFailure = (cause: unknown) =>
-    Effect.logError("MCP refresh token storage failed.", { cause }).pipe(
+  const repositoryFailure = (_cause: unknown) =>
+    Effect.logError("MCP refresh token storage failed.").pipe(
       Effect.andThen(Effect.fail(invalidRefresh())),
     );
 
@@ -550,7 +553,7 @@ const make = Effect.gen(function* () {
       ) {
         return yield* invalidRefresh();
       }
-      const issued = yield* renewGrant(record.sessionId);
+      const issued = yield* renewGrant(record.sessionId, record.rotatedAt);
       return tokenResult(issued, successor, now);
     });
 
@@ -574,12 +577,13 @@ const make = Effect.gen(function* () {
       if (record.expiresAt.epochMilliseconds <= now) return yield* invalidRefresh();
 
       // Renewing first means a revoked or lapsed grant never rotates its token.
-      const issued = yield* renewGrant(record.sessionId);
+      const rotationTime = DateTime.makeUnsafe(now);
+      const issued = yield* renewGrant(record.sessionId, rotationTime);
       const successor = successorOf(refreshToken);
       const rotated = yield* refreshTokens
         .markRotated({
           tokenHash,
-          rotatedAt: DateTime.makeUnsafe(now),
+          rotatedAt: rotationTime,
           successor: {
             tokenHash: yield* hashRefreshToken(successor),
             sessionId: record.sessionId,
@@ -637,8 +641,8 @@ const make = Effect.gen(function* () {
       ) {
         return yield* fail("invalid_grant", "The authorization code is invalid or expired.");
       }
-      const issueFailed = (cause: unknown) =>
-        Effect.logError("Could not issue an MCP client session.", { cause }).pipe(
+      const issueFailed = (_cause: unknown) =>
+        Effect.logError("Could not issue an MCP client session.").pipe(
           Effect.andThen(Effect.fail(fail("invalid_grant", "The session could not be issued."))),
         );
       const issued = yield* environmentAuth
@@ -653,11 +657,7 @@ const make = Effect.gen(function* () {
       );
       yield* refreshTokens
         .deleteExpired(DateTime.makeUnsafe(now))
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not prune MCP refresh tokens.", { cause }),
-          ),
-        );
+        .pipe(Effect.catch(() => Effect.logWarning("Could not prune MCP refresh tokens.")));
       yield* refreshTokens
         .insert({
           tokenHash: yield* hashRefreshToken(refreshToken),

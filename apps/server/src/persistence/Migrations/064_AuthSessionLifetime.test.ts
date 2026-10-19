@@ -64,7 +64,7 @@ layer("064_AuthSessionLifetime", (it) => {
           ["agent", 0, "oauth-grant", null],
           ["cli", 0, "session", null],
           ["cookie", 1, "session", null],
-          ["mobile", 0, "session", null],
+          ["mobile", 1, "session", null],
           ["paired", 1, "session", null],
         ],
       );
