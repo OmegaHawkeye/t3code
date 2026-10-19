@@ -84,64 +84,77 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
         <SettingsRow
           title="Pending plan approvals"
           description="Review saved plans and their independent reviews on the dedicated approvals page."
-        >
-          <Button render={<Link to="/settings/linear-autopilot/approvals" />} variant="outline">
-            Open approvals
-          </Button>
-        </SettingsRow>
+          control={
+            <Button render={<Link to="/settings/linear-autopilot/approvals" />} variant="outline">
+              Open approvals
+            </Button>
+          }
+        />
         <SettingsRow
           title="Intake mode"
           description="Disabled by default. Shadow evaluates only; Queue stores eligible issue snapshots without launching agents."
-        >
-          <select
-            aria-label="Intake mode"
-            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-            value={mode}
-            disabled={!writeAllowed}
-            onChange={(event) => setMode(event.target.value as typeof mode)}
-          >
-            <option value="disabled">Disabled</option>
-            <option value="shadow">Shadow</option>
-            <option value="queue">Queue</option>
-          </select>
-        </SettingsRow>
+          control={
+            <select
+              aria-label="Intake mode"
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              value={mode}
+              disabled={!writeAllowed}
+              onChange={(event) => setMode(event.target.value as typeof mode)}
+            >
+              <option value="disabled">Disabled</option>
+              <option value="shadow">Shadow</option>
+              <option value="queue">Queue</option>
+            </select>
+          }
+        />
         <SettingsRow
           title="Needs Human Approval status ID"
           description="Linear status UUID used when an operator decision is required."
-        >
-          <Input
-            value={needsHumanApprovalStateId}
-            disabled={!writeAllowed}
-            onChange={(event) => setNeedsHumanApprovalStateId(event.target.value)}
-          />
-        </SettingsRow>
+          control={
+            <Input
+              className="w-full @min-[32rem]/settings-row:w-72"
+              value={needsHumanApprovalStateId}
+              disabled={!writeAllowed}
+              onChange={(event) => setNeedsHumanApprovalStateId(event.target.value)}
+            />
+          }
+        />
         <SettingsRow
           title="Blocked status ID"
           description="Linear status UUID used when work is blocked by an external dependency."
-        >
-          <Input
-            value={blockedStateId}
-            disabled={!writeAllowed}
-            onChange={(event) => setBlockedStateId(event.target.value)}
-          />
-        </SettingsRow>
+          control={
+            <Input
+              className="w-full @min-[32rem]/settings-row:w-72"
+              value={blockedStateId}
+              disabled={!writeAllowed}
+              onChange={(event) => setBlockedStateId(event.target.value)}
+            />
+          }
+        />
         <SettingsRow
           title="In Review status ID"
           description="Linear status UUID after verified work is delivered in an open pull request."
-        >
-          <Input
-            value={reviewStateId}
-            disabled={!writeAllowed}
-            onChange={(event) => setReviewStateId(event.target.value)}
-          />
-        </SettingsRow>
-        <SettingsRow title="OME team ID" description="Linear team UUID to poll.">
-          <Input
-            value={teamId}
-            disabled={!writeAllowed}
-            onChange={(event) => setTeamId(event.target.value)}
-          />
-        </SettingsRow>
+          control={
+            <Input
+              className="w-full @min-[32rem]/settings-row:w-72"
+              value={reviewStateId}
+              disabled={!writeAllowed}
+              onChange={(event) => setReviewStateId(event.target.value)}
+            />
+          }
+        />
+        <SettingsRow
+          title="OME team ID"
+          description="Linear team UUID to poll."
+          control={
+            <Input
+              className="w-full @min-[32rem]/settings-row:w-72"
+              value={teamId}
+              disabled={!writeAllowed}
+              onChange={(event) => setTeamId(event.target.value)}
+            />
+          }
+        />
         <SettingsRow
           title="Ready status IDs"
           description="Linear issue status UUIDs that qualify for intake, one per line."
@@ -182,32 +195,33 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
               ? "Credential is stored on this server. Leave blank to keep it."
               : "Stored in the server secret store."
           }
-        >
-          <div className="flex gap-2">
-            <Input
-              type="password"
-              autoComplete="new-password"
-              value={clientId}
-              placeholder={settings.clientId === REDACTED_SECRET ? "Configured" : "Client ID"}
-              disabled={!writeAllowed}
-              onChange={(event) => {
-                setClientId(event.target.value);
-                setClearClientId(false);
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!writeAllowed || settings.clientId !== REDACTED_SECRET}
-              onClick={() => {
-                setClearClientId(true);
-                setClientId("");
-              }}
-            >
-              Clear
-            </Button>
-          </div>
-        </SettingsRow>
+          control={
+            <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:w-72">
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={clientId}
+                placeholder={settings.clientId === REDACTED_SECRET ? "Configured" : "Client ID"}
+                disabled={!writeAllowed}
+                onChange={(event) => {
+                  setClientId(event.target.value);
+                  setClearClientId(false);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!writeAllowed || settings.clientId !== REDACTED_SECRET}
+                onClick={() => {
+                  setClearClientId(true);
+                  setClientId("");
+                }}
+              >
+                Clear
+              </Button>
+            </div>
+          }
+        />
         <SettingsRow
           title="Linear app client secret"
           description={
@@ -215,34 +229,35 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
               ? "Credential is stored on this server. Leave blank to keep it."
               : "Stored in the server secret store and never sent to an agent."
           }
-        >
-          <div className="flex gap-2">
-            <Input
-              type="password"
-              autoComplete="new-password"
-              value={clientSecret}
-              placeholder={
-                settings.clientSecret === REDACTED_SECRET ? "Configured" : "Client secret"
-              }
-              disabled={!writeAllowed}
-              onChange={(event) => {
-                setClientSecret(event.target.value);
-                setClearClientSecret(false);
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!writeAllowed || settings.clientSecret !== REDACTED_SECRET}
-              onClick={() => {
-                setClearClientSecret(true);
-                setClientSecret("");
-              }}
-            >
-              Clear
-            </Button>
-          </div>
-        </SettingsRow>
+          control={
+            <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:w-72">
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={clientSecret}
+                placeholder={
+                  settings.clientSecret === REDACTED_SECRET ? "Configured" : "Client secret"
+                }
+                disabled={!writeAllowed}
+                onChange={(event) => {
+                  setClientSecret(event.target.value);
+                  setClearClientSecret(false);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!writeAllowed || settings.clientSecret !== REDACTED_SECRET}
+                onClick={() => {
+                  setClearClientSecret(true);
+                  setClientSecret("");
+                }}
+              >
+                Clear
+              </Button>
+            </div>
+          }
+        />
         {error ? (
           <p role="alert" className="px-4 text-sm text-destructive">
             {error}
