@@ -54,6 +54,7 @@ export const LinearAutopilotRun = Schema.Struct({
 export type LinearAutopilotRun = typeof LinearAutopilotRun.Type;
 
 const ActiveRunKey = Schema.Struct({ workspaceId: Schema.String, issueId: Schema.String });
+const RunIdRequest = Schema.Struct({ runId: Schema.String });
 const NewRun = Schema.Struct({
   runId: Schema.String,
   workspaceId: Schema.String,
@@ -124,6 +125,9 @@ export class LinearAutopilotRunRepository extends Context.Service<
       { readonly run: LinearAutopilotRun; readonly created: boolean },
       PersistenceSqlError
     >;
+    readonly getById: (
+      runId: string,
+    ) => Effect.Effect<LinearAutopilotRun | null, PersistenceSqlError>;
     readonly listRecoverable: (
       limit: number,
     ) => Effect.Effect<ReadonlyArray<LinearAutopilotRun>, PersistenceSqlError>;
@@ -171,6 +175,34 @@ const make = Effect.gen(function* () {
         AND issue_id = ${issueId}
         AND state NOT IN ('delivered', 'failed', 'cancelled')
       LIMIT 1
+    `,
+  });
+
+  const findById = SqlSchema.findOneOption({
+    Request: RunIdRequest,
+    Result: LinearAutopilotRun,
+    execute: ({ runId }) => sql`
+      SELECT
+        run_id AS "runId",
+        workspace_id AS "workspaceId",
+        issue_id AS "issueId",
+        project_id AS "projectId",
+        generation AS "generation",
+        state AS "state",
+        source_updated_at AS "sourceUpdatedAt",
+        snapshot_hash AS "snapshotHash",
+        revision AS "revision",
+        thread_id AS "threadId",
+        worktree_id AS "worktreeId",
+        approval_plan_hash AS "approvalPlanHash",
+        approval_policy_version AS "approvalPolicyVersion",
+        approval_project_id AS "approvalProjectId",
+        approval_base_ref AS "approvalBaseRef",
+        approved_by AS "approvedBy",
+        approved_at AS "approvedAt",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM linear_autopilot_runs WHERE run_id = ${runId} LIMIT 1
     `,
   });
 
@@ -399,6 +431,11 @@ const make = Effect.gen(function* () {
               ),
           }),
         ),
+    getById: (runId) =>
+      findById({ runId }).pipe(
+        Effect.map((row) => (Option.isSome(row) ? row.value : null)),
+        Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.getById:query")),
+      ),
     listRecoverable: (limit) =>
       listRecoverableRows({ limit }).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.listRecoverable:query")),

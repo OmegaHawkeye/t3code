@@ -58,6 +58,8 @@ layer("LinearAutopilotRunRepository", (it) => {
       assert.isFalse(duplicate.created);
       assert.equal(duplicate.run.runId, first.run.runId);
       assert.equal(duplicate.run.generation, 1);
+      assert.equal((yield* runs.getById(first.run.runId))?.runId, first.run.runId);
+      assert.isNull(yield* runs.getById("missing-run"));
 
       assert.isTrue(
         yield* runs.transition({
