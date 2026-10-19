@@ -263,7 +263,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
             {error}
           </p>
         ) : null}
-        <div className="flex justify-end px-4 pb-3">
+        <div className="flex justify-end px-4 py-4">
           <Button disabled={!writeAllowed} onClick={save}>
             Save Linear settings
           </Button>
