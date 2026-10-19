@@ -94,7 +94,7 @@ export function LinearAutopilotApprovals() {
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Linear plan approvals</h1>
+          <h1 className="text-xl font-semibold">Autopilot plan approvals</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Review the saved plan and independent review before approving the exact plan revision.
           </p>

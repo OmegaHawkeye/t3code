@@ -22,6 +22,10 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 const REDACTED_SECRET = "••••••";
 
 async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
+  if (!credentialsConfigured) {
+    return { catalog: null, projects: [], error: null };
+  }
+
   try {
     const catalog = await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
@@ -83,16 +87,16 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [catalog, setCatalog] = useState<LinearAutopilotCatalog | null>(null);
   const [projects, setProjects] = useState<ProjectSnapshot["projects"]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [loadingCatalog, setLoadingCatalog] = useState(true);
+  const credentialsConfigured =
+    settings.clientId === REDACTED_SECRET && settings.clientSecret === REDACTED_SECRET;
+  const [loadingCatalog, setLoadingCatalog] = useState(credentialsConfigured);
 
   const reloadCatalog = () => {
     setCatalog(null);
     setProjects([]);
     setCatalogError(null);
     setLoadingCatalog(true);
-    void fetchAutopilotCatalog(
-      settings.clientId === REDACTED_SECRET && settings.clientSecret === REDACTED_SECRET,
-    ).then((result) => {
+    void fetchAutopilotCatalog(credentialsConfigured).then((result) => {
       setCatalog(result.catalog);
       setProjects(result.projects);
       setCatalogError(result.error);
@@ -102,9 +106,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
 
   useEffect(() => {
     let cancelled = false;
-    void fetchAutopilotCatalog(
-      settings.clientId === REDACTED_SECRET && settings.clientSecret === REDACTED_SECRET,
-    ).then((result) => {
+    void fetchAutopilotCatalog(credentialsConfigured).then((result) => {
       if (cancelled) return;
       setCatalog(result.catalog);
       setProjects(result.projects);
@@ -114,7 +116,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     return () => {
       cancelled = true;
     };
-  }, [settings.clientId, settings.clientSecret]);
+  }, [credentialsConfigured]);
 
   const selectedTeam = catalog?.teams.find((team) => team.id === teamId);
   const connected = catalog !== null;
