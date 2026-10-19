@@ -39,6 +39,13 @@ export const LinearAutopilotCatalog = Schema.Struct({
 });
 export type LinearAutopilotCatalog = typeof LinearAutopilotCatalog.Type;
 
+export const LinearAutopilotOAuthStartResult = Schema.Struct({
+  authorizationUrl: Schema.String,
+  redirectUri: Schema.String,
+});
+export const LinearAutopilotOAuthStatus = Schema.Struct({ connected: Schema.Boolean });
+export const LinearAutopilotOAuthDisconnectResult = Schema.Struct({ disconnected: Schema.Boolean });
+
 export const LinearAutopilotApproveRequest = Schema.Struct({
   runId: Schema.String,
   expectedRevision: Schema.Int,

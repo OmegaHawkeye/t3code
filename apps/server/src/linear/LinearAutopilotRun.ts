@@ -65,7 +65,7 @@ const make = Effect.gen(function* () {
                   return Effect.fail(error);
                 }
 
-                return tokenProvider.mint().pipe(
+                return tokenProvider.mint({ forceRefresh: true }).pipe(
                   Effect.tap((replacementToken) => Ref.set(tokenRef, replacementToken)),
                   Effect.flatMap((accessToken) =>
                     client.listIssues({
@@ -91,7 +91,7 @@ const make = Effect.gen(function* () {
                   return Effect.fail(error);
                 }
 
-                return tokenProvider.mint().pipe(
+                return tokenProvider.mint({ forceRefresh: true }).pipe(
                   Effect.tap((replacementToken) => Ref.set(tokenRef, replacementToken)),
                   Effect.flatMap((accessToken) =>
                     client.updateIssueState({ accessToken, ...input }),

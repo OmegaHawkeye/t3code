@@ -6,7 +6,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import {
   annotateEnvironmentRequest,
@@ -16,6 +18,7 @@ import {
 import * as LinearAutopilotOperator from "./LinearAutopilotOperator.ts";
 import * as LinearAutopilotClient from "./LinearAutopilotClient.ts";
 import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
+import * as LinearAutopilotOAuth from "./LinearAutopilotOAuth.ts";
 
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -24,8 +27,49 @@ export const layer = HttpApiBuilder.group(
     const operator = yield* LinearAutopilotOperator.LinearAutopilotOperator;
     const linearClient = yield* LinearAutopilotClient.LinearAutopilotClient;
     const tokenProvider = yield* LinearAutopilotToken.LinearAutopilotTokenProvider;
+    const oauth = yield* LinearAutopilotOAuth.LinearAutopilotOAuth;
 
     return handlers
+      .handle(
+        "oauthStatus",
+        Effect.fn("environment.linearAutopilot.oauthStatus")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* oauth.isConnected.pipe(
+            Effect.map((connected) => ({ connected })),
+            Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
+          );
+        }),
+      )
+      .handle(
+        "oauthStart",
+        Effect.fn("environment.linearAutopilot.oauthStart")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const callbackOrigin = Option.match(HttpServerRequest.toURL(request), {
+            onNone: () => null,
+            onSome: (url) => url.origin,
+          });
+          if (!callbackOrigin) {
+            return yield* failEnvironmentInternal("internal_error", "Request URL unavailable");
+          }
+          return yield* oauth
+            .start({ callbackOrigin, returnOrigin: args.headers.origin })
+            .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
+        }),
+      )
+      .handle(
+        "oauthDisconnect",
+        Effect.fn("environment.linearAutopilot.oauthDisconnect")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          yield* oauth.disconnect.pipe(
+            Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
+          );
+          return { disconnected: true };
+        }),
+      )
       .handle(
         "catalog",
         Effect.fn("environment.linearAutopilot.catalog")(function* (args) {

@@ -70,6 +70,9 @@ import {
   LinearAutopilotApproveResult,
   LinearAutopilotPendingApprovals,
   LinearAutopilotCatalog,
+  LinearAutopilotOAuthDisconnectResult,
+  LinearAutopilotOAuthStartResult,
+  LinearAutopilotOAuthStatus,
 } from "./linearAutopilot.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
@@ -84,6 +87,12 @@ import {
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
+});
+
+const LinearOAuthStartHeaders = Schema.Struct({
+  authorization: Schema.optionalKey(Schema.String),
+  dpop: Schema.optionalKey(Schema.String),
+  origin: Schema.String,
 });
 
 const OrchestrationProtocolHeaders = Schema.Struct({
@@ -683,6 +692,27 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
 ) {}
 
 class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopilot")
+  .add(
+    HttpApiEndpoint.get("oauthStatus", "/api/linear-autopilot/oauth/status", {
+      headers: OptionalBearerHeaders,
+      success: LinearAutopilotOAuthStatus,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("oauthStart", "/api/linear-autopilot/oauth/start", {
+      headers: LinearOAuthStartHeaders,
+      success: LinearAutopilotOAuthStartResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("oauthDisconnect", "/api/linear-autopilot/oauth/disconnect", {
+      headers: OptionalBearerHeaders,
+      success: LinearAutopilotOAuthDisconnectResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("catalog", "/api/linear-autopilot/catalog", {
       headers: OptionalBearerHeaders,

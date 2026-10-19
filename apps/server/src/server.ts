@@ -122,6 +122,8 @@ import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as LinearAutopilotClient from "./linear/LinearAutopilotClient.ts";
+import * as LinearAutopilotOAuth from "./linear/LinearAutopilotOAuth.ts";
+import * as LinearAutopilotOAuthCallback from "./linear/LinearAutopilotOAuthCallback.ts";
 import * as LinearAutopilotApproval from "./linear/LinearAutopilotApproval.ts";
 import * as LinearAutopilotDispatcher from "./linear/LinearAutopilotDispatcher.ts";
 import * as LinearAutopilotHttp from "./linear/LinearAutopilotHttp.ts";
@@ -532,9 +534,21 @@ const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService));
 
-const layerLinearAutopilotRun = LinearAutopilotRun.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(LinearAutopilotClient.layer, LinearAutopilotToken.layer)),
+const layerLinearAutopilotToken = LinearAutopilotToken.layer;
+
+const layerLinearAutopilotOAuth = LinearAutopilotOAuth.layer.pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(ServerSecretStore.layer),
 );
+
+const layerLinearAutopilotRun = LinearAutopilotRun.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(LinearAutopilotClient.layer, layerLinearAutopilotToken)),
+);
+
+const layerLinearAutopilotHttpRoutes = Layer.mergeAll(
+  LinearAutopilotHttp.layer,
+  LinearAutopilotOAuthCallback.layer,
+).pipe(Layer.provideMerge(layerLinearAutopilotRun));
 
 const layerLinearAutopilotApproval = LinearAutopilotApproval.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(LinearAutopilotRuns.layer, layerLinearAutopilotRun)),
@@ -574,9 +588,7 @@ const layerLinearAutopilotWorker = Layer.effectDiscard(
   Layer.provide(LinearAutopilotDispatcher.layer),
   Layer.provide(LinearAutopilotPhaseAttempts.layer),
   Layer.provide(LinearAutopilotPoll.layer),
-  Layer.provide(LinearAutopilotRun.layer),
-  Layer.provide(LinearAutopilotClient.layer),
-  Layer.provide(LinearAutopilotToken.layer),
+  Layer.provide(layerLinearAutopilotRun),
   Layer.provide(LinearAutopilotIntake.layer),
   Layer.provide(LinearAutopilotRuns.layer),
   Layer.provide(LinearAutopilotPollState.layer),
@@ -752,13 +764,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
-      Layer.provide(
-        LinearAutopilotHttp.layer.pipe(
-          Layer.provideMerge(
-            Layer.mergeAll(LinearAutopilotClient.layer, LinearAutopilotToken.layer),
-          ),
-        ),
-      ),
+      Layer.provide(layerLinearAutopilotHttpRoutes),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
@@ -1144,6 +1150,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
+      Layer.provide(layerLinearAutopilotOAuth),
     );
   }),
 ).pipe(Layer.provide(ProcessRunner.layer));
