@@ -19,7 +19,7 @@ Replace the Larl-to-T3 Linear bridge with a native server-owned workflow: eligib
 - Linear is the only intake source in this issue.
 - Polling is the first intake adapter and recovery path; add webhooks only after signature verification is implemented.
 - Intake starts disabled or in shadow mode until credentials, team selection, and a trusted T3 project mapping validate.
-- Only a configured team and selected workflow states/labels are eligible. The OME team will add the `Blocked` and `Needs Human Approval` workflow states manually; the implementation must treat their IDs/names as configuration, not assume they already exist.
+- Only a configured team and selected workflow states/labels are eligible. OME has created `Blocked` and `Needs Human Approval`; the implementation treats their IDs/names as configuration, not hard-coded values.
 - Repository identity comes only from a configured `ProjectId` resolved through T3's project catalog. Linear content cannot choose paths, branches, commands, models, or permissions.
 - Use server-side Linear app credentials with the `client_credentials` grant. Mint an app-actor token for each autopilot run, keep it in memory only, and re-mint once after a 401; current Linear guidance says not to persist these tokens. Never expose credentials or minted tokens to clients, prompts, logs, or run rows.
 - Plans and reviews use read-only interaction/runtime ceilings. Approval is human-only and binds the exact plan hash, T3 project, base ref, and policy version. Any change invalidates approval.
@@ -29,7 +29,7 @@ Replace the Larl-to-T3 Linear bridge with a native server-owned workflow: eligib
 ## Delivery slices
 
 1. **Durable core (in progress):** migrations and repositories for bounded issue snapshots, delivery dedupe, intake outbox, one active run per issue, revisioned transitions, recovery queries, and approval binding. Complete idempotent dispatch/recovery semantics before launching agents.
-2. **Connection and shadow intake:** server-only credentials and per-run token minting; typed Linear API adapter; polling cursor; eligibility policy; trusted project mapping; bounded intake activity; duplicate/out-of-order handling. Shadow mode must show decisions without creating agent runs.
+2. **Connection and shadow intake:** server-only credentials and per-run token minting; typed Linear API adapter; durable per-team poll checkpoint with overlap and bounded pagination; eligibility policy; trusted project mapping; bounded intake activity; duplicate/out-of-order handling. Shadow mode must show decisions without creating agent runs.
 3. **Plan and review:** durable phase attempts and evidence summaries; launch read-only planner and independent reviewer through T3 services with stable command IDs; verify clean worktrees; reconcile launch receipts after restart.
 4. **Human gate:** present plan/review in the T3 operator surface; record approve/reject with actor and timestamp; transition Linear to the configured approval state; invalidate on plan, project, ref, or policy changes; pause for operator input where required.
 5. **Implementation and evidence:** create a separate worktree at the approved ref; execute only configured checks; capture bounded outcomes; enforce clean diff and prohibited-path checks; cap repairs; support cancel/pause/resume without replaying unsafe side effects.
@@ -38,7 +38,7 @@ Replace the Larl-to-T3 Linear bridge with a native server-owned workflow: eligib
 
 ## Current branch state
 
-The branch contains migrations 066-067 and persistence repositories for issue intake/outbox and run state, plus approval checks bound to plan, policy, project, and base ref. A pure intake policy requires an explicitly configured OME team, ready state, trigger label, and Linear-project-to-T3-`ProjectId` mapping; shadow evaluation has no enqueue or launch side effects. A server-side read-only GraphQL adapter, per-run client-credentials token provider, and run-scoped session that retries once after a 401 now exist. The token provider reads credentials from T3's file-backed server secret store, mints a fresh token on each run, and never persists it; a secure credential setup surface is still needed. Polling/cursor persistence and worker wiring remain open, as do the T3 thread launcher, operator UI, and delivery adapter. No autonomous runs can be started by the current slices alone.
+The branch contains migrations 066-068 and persistence repositories for issue intake/outbox, run state, and monotonic per-team poll checkpoints, plus approval checks bound to plan, policy, project, and base ref. A pure intake policy requires an explicitly configured OME team, ready state, trigger label, and Linear-project-to-T3-`ProjectId` mapping; shadow polling has no enqueue or launch side effects. The read-only GraphQL adapter queries updated issues with bounded pagination; a run-scoped client-credentials session retries once after a 401. The token provider reads credentials from T3's file-backed server secret store, mints a fresh token on each run, and never persists it; a secure credential setup surface is still needed. Poller startup/scheduling and operator-visible decision reporting remain open, as do the T3 thread launcher, approval UI, and delivery adapter. No autonomous runs can be started by the current slices alone.
 
 ## Completion gates
 

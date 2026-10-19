@@ -60,7 +60,10 @@ it.effect("mints once at run start and retries a 401 once with a replacement tok
   return Effect.gen(function* () {
     const service = yield* LinearAutopilotRun.LinearAutopilotRun;
     const run = yield* service.begin({ teamId: "team-ome" });
-    assert.deepStrictEqual(yield* run.listIssuesPage({ after: "cursor-1" }), page);
+    assert.deepStrictEqual(
+      yield* run.listIssuesPage({ updatedSince: "2026-10-19T08:00:00.000Z", after: "cursor-1" }),
+      page,
+    );
     assert.deepStrictEqual(harness.readCounts(), { minted: 2, requests: 2 });
   }).pipe(Effect.provide(harness.layer));
 });
@@ -70,7 +73,9 @@ it.effect("does not enter a token refresh loop when the replacement token also g
   return Effect.gen(function* () {
     const service = yield* LinearAutopilotRun.LinearAutopilotRun;
     const run = yield* service.begin({ teamId: "team-ome" });
-    const exit = yield* Effect.exit(run.listIssuesPage({}));
+    const exit = yield* Effect.exit(
+      run.listIssuesPage({ updatedSince: "2026-10-19T08:00:00.000Z" }),
+    );
     assert.isTrue(exit._tag === "Failure");
     assert.deepStrictEqual(harness.readCounts(), { minted: 2, requests: 2 });
   }).pipe(Effect.provide(harness.layer));

@@ -68,6 +68,7 @@ it.effect("decodes bounded issue pages for one configured team", () => {
     const page = yield* client.listIssues({
       accessToken: "secret-test-token",
       teamId: "team-ome",
+      updatedSince: "2026-10-19T08:00:00.000Z",
       after: "cursor-1",
     });
 
@@ -85,6 +86,12 @@ it.effect("decodes bounded issue pages for one configured team", () => {
       Option.getOrUndefined(HttpHeaders.get("authorization")(requests[0]!.headers)),
       "Bearer secret-test-token",
     );
+    assert.include(
+      requests[0]?.body._tag === "Uint8Array"
+        ? new TextDecoder().decode(requests[0].body.body)
+        : "",
+      "2026-10-19T08:00:00.000Z",
+    );
   }).pipe(Effect.provide(layer));
 });
 
@@ -92,7 +99,11 @@ it.effect("rejects GraphQL partial failures without exposing upstream messages",
   Effect.gen(function* () {
     const client = yield* LinearAutopilotClient.LinearAutopilotClient;
     const exit = yield* Effect.exit(
-      client.listIssues({ accessToken: "token", teamId: "team-ome" }),
+      client.listIssues({
+        accessToken: "token",
+        teamId: "team-ome",
+        updatedSince: "2026-10-19T08:00:00.000Z",
+      }),
     );
     assert.isTrue(Exit.isFailure(exit));
     if (Exit.isFailure(exit)) {
@@ -116,7 +127,11 @@ it.effect("reports HTTP failures without reading or logging the response body", 
   Effect.gen(function* () {
     const client = yield* LinearAutopilotClient.LinearAutopilotClient;
     const exit = yield* Effect.exit(
-      client.listIssues({ accessToken: "token", teamId: "team-ome" }),
+      client.listIssues({
+        accessToken: "token",
+        teamId: "team-ome",
+        updatedSince: "2026-10-19T08:00:00.000Z",
+      }),
     );
     assert.isTrue(Exit.isFailure(exit));
     if (Exit.isFailure(exit)) {

@@ -9,6 +9,7 @@ import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
 export interface LinearAutopilotRunSession {
   /** Reuses this run's in-memory token and retries one request once after a 401. */
   readonly listIssuesPage: (input: {
+    readonly updatedSince: string;
     readonly after?: string | null;
   }) => Effect.Effect<
     LinearAutopilotClient.LinearAutopilotIssuePage,
@@ -43,6 +44,7 @@ const make = Effect.gen(function* () {
                 client.listIssues({
                   accessToken,
                   teamId,
+                  updatedSince: input.updatedSince,
                   ...(input.after === undefined ? {} : { after: input.after }),
                 }),
               ),
@@ -61,6 +63,7 @@ const make = Effect.gen(function* () {
                     client.listIssues({
                       accessToken,
                       teamId,
+                      updatedSince: input.updatedSince,
                       ...(input.after === undefined ? {} : { after: input.after }),
                     }),
                   ),

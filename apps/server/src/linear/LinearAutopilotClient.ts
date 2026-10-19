@@ -70,13 +70,14 @@ export class LinearAutopilotClient extends Context.Service<
     readonly listIssues: (input: {
       readonly accessToken: string;
       readonly teamId: string;
+      readonly updatedSince: string;
       readonly after?: string | null;
     }) => Effect.Effect<LinearAutopilotIssuePage, LinearAutopilotClientError>;
   }
 >()("t3/linear/LinearAutopilotClient") {}
 
-const issueQuery = `query LinearAutopilotIntakeIssues($teamId: ID!, $after: String) {
-  issues(first: ${PAGE_SIZE}, after: $after, filter: { team: { id: { eq: $teamId } } }) {
+const issueQuery = `query LinearAutopilotIntakeIssues($teamId: ID!, $updatedSince: DateTime!, $after: String) {
+  issues(first: ${PAGE_SIZE}, after: $after, filter: { team: { id: { eq: $teamId } }, updatedAt: { gte: $updatedSince } }, orderBy: updatedAt) {
     nodes {
       id
       identifier
@@ -100,7 +101,11 @@ const make = Effect.gen(function* () {
       HttpClientRequest.bearerToken(input.accessToken),
       HttpClientRequest.bodyJson({
         query: issueQuery,
-        variables: { teamId: input.teamId, after: input.after ?? null },
+        variables: {
+          teamId: input.teamId,
+          updatedSince: input.updatedSince,
+          after: input.after ?? null,
+        },
       }),
       Effect.mapError(() => new LinearAutopilotClientError({ reason: "request" })),
       Effect.flatMap(httpClient.execute),
