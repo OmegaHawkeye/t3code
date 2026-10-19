@@ -10,8 +10,8 @@ import type * as PlatformError from "effect/PlatformError";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as LinearAutopilotApproval from "./LinearAutopilotApproval.ts";
 import * as LinearAutopilotClient from "./LinearAutopilotClient.ts";
-import * as LinearAutopilotDispatcher from "./LinearAutopilotDispatcher.ts";
 import * as LinearAutopilotPhaseLaunch from "./LinearAutopilotPhaseLaunch.ts";
+import * as LinearAutopilotRun from "./LinearAutopilotRun.ts";
 import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
 import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
@@ -87,6 +87,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const phaseLaunch = yield* LinearAutopilotPhaseLaunch.LinearAutopilotPhaseLaunch;
   const approval = yield* LinearAutopilotApproval.LinearAutopilotApproval;
+  const linear = yield* LinearAutopilotRun.LinearAutopilotRun;
   const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
 
@@ -102,9 +103,19 @@ const make = Effect.gen(function* () {
       let deferred = 0;
 
       for (const initialRun of recoverableRuns) {
-        if (initialRun.state !== "planning" && initialRun.state !== "reviewing") continue;
+        if (
+          initialRun.state !== "planning" &&
+          initialRun.state !== "reviewing" &&
+          initialRun.state !== "implementing"
+        )
+          continue;
         let run = initialRun;
-        const phase = run.state === "planning" ? "planning" : "review";
+        const phase =
+          run.state === "planning"
+            ? "planning"
+            : run.state === "reviewing"
+              ? "review"
+              : "implementation";
         let attempt = yield* attempts.getLatest({ runId: run.runId, phase });
 
         if (attempt !== null && (attempt.status === "running" || attempt.status === "unknown")) {
@@ -121,6 +132,25 @@ const make = Effect.gen(function* () {
           }
           const projection = projectionResult.success;
           const projectionRun = latestRun(projection.runs);
+          if (
+            run.state === "implementing" &&
+            projection.turnItems.some(
+              (item) =>
+                item.type === "approval_request" &&
+                (item.status === "pending" || item.status === "waiting"),
+            )
+          ) {
+            const autopilot = currentSettings.linearAutopilot;
+            if (autopilot.teamId.length > 0 && autopilot.needsHumanApprovalStateId.length > 0) {
+              const session = yield* linear.begin({ teamId: autopilot.teamId });
+              yield* session.updateIssueState({
+                issueId: run.issueId,
+                stateId: autopilot.needsHumanApprovalStateId,
+              });
+            }
+            deferred += 1;
+            continue;
+          }
           if (projectionRun === null || !isTerminalFailure(projectionRun.status)) {
             const summary = completedAssistantText(projection);
             if (summary === null) {
@@ -154,8 +184,26 @@ const make = Effect.gen(function* () {
               nextState: "paused",
               updatedAt: yield* DateTime.now,
             });
+            const autopilot = currentSettings.linearAutopilot;
+            if (autopilot.teamId.length > 0 && autopilot.blockedStateId.length > 0) {
+              const session = yield* linear.begin({ teamId: autopilot.teamId });
+              yield* session.updateIssueState({
+                issueId: run.issueId,
+                stateId: autopilot.blockedStateId,
+              });
+            }
             continue;
           }
+        }
+
+        if (run.state === "implementing" && attempt?.status === "succeeded") {
+          yield* runs.transition({
+            runId: run.runId,
+            expectedRevision: run.revision,
+            nextState: "verifying",
+            updatedAt: yield* DateTime.now,
+          });
+          continue;
         }
 
         if (

@@ -9,6 +9,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as LinearAutopilotApproval from "./LinearAutopilotApproval.ts";
 import * as LinearAutopilotPhaseLaunch from "./LinearAutopilotPhaseLaunch.ts";
 import * as LinearAutopilotReconciler from "./LinearAutopilotReconciler.ts";
+import * as LinearAutopilotRun from "./LinearAutopilotRun.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
 import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
@@ -26,11 +27,14 @@ const reviewerModel: ModelSelection = {
   model: "claude-sonnet-4-5",
 };
 
-const harness = (options: { readonly completePlanning?: boolean } = {}) => {
+const harness = (
+  options: { readonly completePlanning?: boolean; readonly projection?: unknown } = {},
+) => {
   const reviewLaunches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotReadOnlyLaunchInput> = [];
   const approvalRequests: Array<
     LinearAutopilotApproval.LinearAutopilotApprovalRequest & { readonly reviewerApproved: boolean }
   > = [];
+  const linearUpdates: Array<{ readonly issueId: string; readonly stateId: string }> = [];
   const dependencies = Layer.mergeAll(
     LinearAutopilotIntake.layer,
     LinearAutopilotRuns.layer,
@@ -44,20 +48,22 @@ const harness = (options: { readonly completePlanning?: boolean } = {}) => {
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadProjection: () =>
-        options.completePlanning
-          ? Effect.succeed({
-              thread: { modelSelection: plannerModel },
-              runs: [{ ordinal: 1, status: "completed", id: "provider-run-1" }],
-              messages: [
-                {
-                  role: "assistant",
-                  runId: "provider-run-1",
-                  text: "Implementation plan",
-                  updatedAt: now,
-                },
-              ],
-            } as never)
-          : Effect.die("Unexpected transcript read"),
+        options.projection !== undefined
+          ? Effect.succeed(options.projection as never)
+          : options.completePlanning
+            ? Effect.succeed({
+                thread: { modelSelection: plannerModel },
+                runs: [{ ordinal: 1, status: "completed", id: "provider-run-1" }],
+                messages: [
+                  {
+                    role: "assistant",
+                    runId: "provider-run-1",
+                    text: "Implementation plan",
+                    updatedAt: now,
+                  },
+                ],
+              } as never)
+            : Effect.die("Unexpected transcript read"),
     }),
     Layer.mock(LinearAutopilotPhaseLaunch.LinearAutopilotPhaseLaunch)({
       launchReadOnly: (input) =>
@@ -79,15 +85,24 @@ const harness = (options: { readonly completePlanning?: boolean } = {}) => {
         }),
       approve: () => Effect.succeed(true),
     }),
+    Layer.mock(LinearAutopilotRun.LinearAutopilotRun)({
+      begin: () =>
+        Effect.succeed({
+          listIssuesPage: () => Effect.die("Unexpected issue poll"),
+          updateIssueState: (input) =>
+            Effect.sync(() => linearUpdates.push(input)).pipe(Effect.asVoid),
+        }),
+    }),
   ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory), Layer.provideMerge(NodeServices.layer));
   return {
     layer: LinearAutopilotReconciler.layer.pipe(Layer.provideMerge(dependencies)),
     reviewLaunches,
     approvalRequests,
+    linearUpdates,
   };
 };
 
-const seedRun = (state: "planning" | "reviewing") =>
+const seedRun = (state: "planning" | "reviewing" | "implementing") =>
   Effect.gen(function* () {
     const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
     yield* intake.ingest({
@@ -118,11 +133,41 @@ const seedRun = (state: "planning" | "reviewing") =>
       updatedAt: now,
       baseRef: "main",
     });
-    if (state === "reviewing") {
+    if (state !== "planning") {
       yield* runs.transition({
         runId: run.runId,
         expectedRevision: 1,
         nextState: "reviewing",
+        updatedAt: now,
+      });
+    }
+    if (state === "implementing") {
+      yield* runs.transition({
+        runId: run.runId,
+        expectedRevision: 2,
+        nextState: "needs_approval",
+        updatedAt: now,
+        approvalPlanHash: "b".repeat(64),
+        approvalPolicyVersion: "human-review-v1",
+        approvalProjectId: projectId,
+        approvalBaseRef: "main",
+      });
+      yield* runs.approve({
+        runId: run.runId,
+        expectedRevision: 3,
+        planHash: "b".repeat(64),
+        policyVersion: "human-review-v1",
+        projectId,
+        baseRef: "main",
+        approvedBy: "operator",
+        approvedAt: now,
+      });
+      const approved = yield* runs.getById(run.runId);
+      assert.isNotNull(approved);
+      yield* runs.transition({
+        runId: run.runId,
+        expectedRevision: approved.revision,
+        nextState: "implementing",
         updatedAt: now,
       });
     }
@@ -152,7 +197,7 @@ const seedAttempt = (runId: string, phase: "planning" | "review", summary: strin
     });
   });
 
-const seedRunningAttempt = (runId: string, phase: "planning" | "review") =>
+const seedRunningAttempt = (runId: string, phase: "planning" | "review" | "implementation") =>
   Effect.gen(function* () {
     const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
     const attempt = yield* attempts.begin({
@@ -225,5 +270,66 @@ it.effect("sends only an explicit approve verdict to the exact human approval ga
     assert.equal(setup.approvalRequests[0]?.planHash.length, 64);
     assert.equal(setup.approvalRequests[0]?.needsHumanApprovalStateId, "approval-state-1");
     assert.equal(setup.approvalRequests[0]?.baseRef, "main");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("records completed implementation and advances to verification", () => {
+  const setup = harness({
+    projection: {
+      thread: { modelSelection: plannerModel },
+      runs: [{ ordinal: 1, status: "completed", id: "implementation-provider-run" }],
+      messages: [
+        {
+          role: "assistant",
+          runId: "implementation-provider-run",
+          text: "Implemented the approved plan; tests reported passing.",
+          updatedAt: now,
+        },
+      ],
+      turnItems: [],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("implementing");
+    yield* seedRunningAttempt(runId, "implementation");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    const result = yield* reconciler.reconcile();
+    assert.equal(result.phasesCompleted, 1);
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    assert.equal((yield* runs.getById(runId))?.state, "verifying");
+    const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
+    assert.equal(
+      (yield* attempts.getLatest({ runId, phase: "implementation" }))?.summary,
+      "Implemented the approved plan; tests reported passing.",
+    );
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("moves provider permission requests to Needs Human Approval in Linear", () => {
+  const setup = harness({
+    projection: {
+      thread: { modelSelection: plannerModel },
+      runs: [{ ordinal: 1, status: "running", id: "implementation-provider-run" }],
+      messages: [],
+      turnItems: [
+        {
+          type: "approval_request",
+          id: "permission-request",
+          status: "pending",
+          requestId: "provider-request",
+          requestKind: "command",
+        },
+      ],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("implementing");
+    yield* seedRunningAttempt(runId, "implementation");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    const result = yield* reconciler.reconcile();
+    assert.equal(result.deferred, 1);
+    assert.deepStrictEqual(setup.linearUpdates, [
+      { issueId: "issue-1", stateId: "approval-state-1" },
+    ]);
   }).pipe(Effect.provide(setup.layer));
 });
