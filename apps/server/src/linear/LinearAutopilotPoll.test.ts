@@ -23,6 +23,7 @@ const issue: LinearAutopilotClient.LinearAutopilotIssue = {
   id: "issue-1",
   identifier: "OME-223",
   title: "Autopilot intake",
+  description: "",
   url: "https://linear.app/ome/issue/OME-223",
   updatedAt: DateTime.makeUnsafe("2026-10-19T09:30:00.000Z"),
   team: { id: "team-ome" },
@@ -48,6 +49,7 @@ const harness = (pageFactory: (page: number) => LinearAutopilotClient.LinearAuto
               requests.push({ updatedSince: input.updatedSince, after: input.after });
               return Effect.succeed(pageFactory(++pages));
             },
+            updateIssueState: () => Effect.void,
           }),
       }),
     ),

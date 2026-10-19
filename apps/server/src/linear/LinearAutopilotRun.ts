@@ -16,6 +16,14 @@ export interface LinearAutopilotRunSession {
     | LinearAutopilotClient.LinearAutopilotClientError
     | LinearAutopilotToken.LinearAutopilotTokenError
   >;
+  readonly updateIssueState: (input: {
+    readonly issueId: string;
+    readonly stateId: string;
+  }) => Effect.Effect<
+    void,
+    | LinearAutopilotClient.LinearAutopilotClientError
+    | LinearAutopilotToken.LinearAutopilotTokenError
+  >;
 }
 
 export class LinearAutopilotRun extends Context.Service<
@@ -71,7 +79,28 @@ const make = Effect.gen(function* () {
               }),
             );
 
-          return { listIssuesPage };
+          const updateIssueState: LinearAutopilotRunSession["updateIssueState"] = (input) =>
+            Ref.get(tokenRef).pipe(
+              Effect.flatMap((accessToken) => client.updateIssueState({ accessToken, ...input })),
+              Effect.catch((error) => {
+                if (
+                  error._tag !== "LinearAutopilotClientError" ||
+                  error.reason !== "http" ||
+                  error.status !== 401
+                ) {
+                  return Effect.fail(error);
+                }
+
+                return tokenProvider.mint().pipe(
+                  Effect.tap((replacementToken) => Ref.set(tokenRef, replacementToken)),
+                  Effect.flatMap((accessToken) =>
+                    client.updateIssueState({ accessToken, ...input }),
+                  ),
+                );
+              }),
+            );
+
+          return { listIssuesPage, updateIssueState };
         }),
       ),
     );

@@ -16,6 +16,7 @@ const issue = {
   id: "issue-1",
   identifier: "OME-223",
   title: "Linear intake",
+  description: "",
   url: "https://linear.app/ome/issue/OME-223",
   updatedAt: "2026-10-19T09:00:00.000Z",
   team: { id: "team-ome" },
@@ -94,6 +95,65 @@ it.effect("decodes bounded issue pages for one configured team", () => {
     );
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("updates the configured issue state without exposing Linear response text", () => {
+  const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+  return Effect.gen(function* () {
+    const client = yield* LinearAutopilotClient.LinearAutopilotClient;
+    yield* client.updateIssueState({
+      accessToken: "secret-test-token",
+      issueId: "issue-1",
+      stateId: "approval-state",
+    });
+
+    assert.strictEqual(
+      Option.getOrUndefined(HttpHeaders.get("authorization")(requests[0]!.headers)),
+      "Bearer secret-test-token",
+    );
+    const body =
+      requests[0]?.body._tag === "Uint8Array"
+        ? new TextDecoder().decode(requests[0].body.body)
+        : "";
+    assert.include(body, "LinearAutopilotUpdateIssueState");
+    assert.include(body, '"issueId":"issue-1"');
+    assert.include(body, '"stateId":"approval-state"');
+  }).pipe(
+    Effect.provide(
+      makeLayer(
+        {
+          data: { issueUpdate: { success: true, issue: { id: "issue-1" } } },
+        },
+        200,
+        requests,
+      ),
+    ),
+  );
+});
+
+it.effect("rejects an unsuccessful issue state mutation", () =>
+  Effect.gen(function* () {
+    const client = yield* LinearAutopilotClient.LinearAutopilotClient;
+    const exit = yield* Effect.exit(
+      client.updateIssueState({
+        accessToken: "token",
+        issueId: "issue-1",
+        stateId: "approval-state",
+      }),
+    );
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      const error = Cause.squash(exit.cause);
+      assert.instanceOf(error, LinearAutopilotClient.LinearAutopilotClientError);
+      assert.strictEqual(error.reason, "missing-data");
+    }
+  }).pipe(
+    Effect.provide(
+      makeLayer({
+        data: { issueUpdate: { success: false, issue: { id: "issue-1" } } },
+      }),
+    ),
+  ),
+);
 
 it.effect("rejects GraphQL partial failures without exposing upstream messages", () =>
   Effect.gen(function* () {

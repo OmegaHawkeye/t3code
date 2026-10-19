@@ -15,6 +15,7 @@ const page: LinearAutopilotClient.LinearAutopilotIssuePage = {
 const makeLayer = (input: { readonly failRetry?: boolean } = {}) => {
   let minted = 0;
   let requests = 0;
+  let stateUpdates = 0;
   const runLayer = LinearAutopilotRun.layer.pipe(
     Layer.provide(
       Layer.succeed(
@@ -48,11 +49,23 @@ const makeLayer = (input: { readonly failRetry?: boolean } = {}) => {
             }
             return Effect.succeed(page);
           },
+          updateIssueState: ({ accessToken }) => {
+            stateUpdates += 1;
+            if (accessToken === "token-1" || input.failRetry) {
+              return Effect.fail(
+                new LinearAutopilotClient.LinearAutopilotClientError({
+                  reason: "http",
+                  status: 401,
+                }),
+              );
+            }
+            return Effect.void;
+          },
         }),
       ),
     ),
   );
-  return { layer: runLayer, readCounts: () => ({ minted, requests }) };
+  return { layer: runLayer, readCounts: () => ({ minted, requests, stateUpdates }) };
 };
 
 it.effect("mints once at run start and retries a 401 once with a replacement token", () => {
@@ -64,7 +77,8 @@ it.effect("mints once at run start and retries a 401 once with a replacement tok
       yield* run.listIssuesPage({ updatedSince: "2026-10-19T08:00:00.000Z", after: "cursor-1" }),
       page,
     );
-    assert.deepStrictEqual(harness.readCounts(), { minted: 2, requests: 2 });
+    yield* run.updateIssueState({ issueId: "issue-1", stateId: "approval-state" });
+    assert.deepStrictEqual(harness.readCounts(), { minted: 2, requests: 2, stateUpdates: 1 });
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -77,6 +91,16 @@ it.effect("does not enter a token refresh loop when the replacement token also g
       run.listIssuesPage({ updatedSince: "2026-10-19T08:00:00.000Z" }),
     );
     assert.isTrue(exit._tag === "Failure");
-    assert.deepStrictEqual(harness.readCounts(), { minted: 2, requests: 2 });
+    assert.deepStrictEqual(harness.readCounts(), { minted: 2, requests: 2, stateUpdates: 0 });
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("refreshes the run token once when an issue state update receives a 401", () => {
+  const harness = makeLayer();
+  return Effect.gen(function* () {
+    const service = yield* LinearAutopilotRun.LinearAutopilotRun;
+    const run = yield* service.begin({ teamId: "team-ome" });
+    yield* run.updateIssueState({ issueId: "issue-1", stateId: "approval-state" });
+    assert.deepStrictEqual(harness.readCounts(), { minted: 2, requests: 0, stateUpdates: 2 });
   }).pipe(Effect.provide(harness.layer));
 });
