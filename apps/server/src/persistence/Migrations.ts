@@ -73,6 +73,7 @@ import Migration0067 from "./Migrations/067_LinearAutopilotRuns.ts";
 import Migration0068 from "./Migrations/068_LinearAutopilotPollState.ts";
 import Migration0069 from "./Migrations/069_LinearAutopilotPhaseAttempts.ts";
 import Migration0070 from "./Migrations/070_LinearAutopilotIssueContext.ts";
+import Migration0071 from "./Migrations/071_LinearAutopilotRunBaseRef.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -146,6 +147,7 @@ export const migrationEntries = [
   [68, "LinearAutopilotPollState", Migration0068],
   [69, "LinearAutopilotPhaseAttempts", Migration0069],
   [70, "LinearAutopilotIssueContext", Migration0070],
+  [71, "LinearAutopilotRunBaseRef", Migration0071],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

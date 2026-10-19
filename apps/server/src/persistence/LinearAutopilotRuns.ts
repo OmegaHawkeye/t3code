@@ -46,6 +46,7 @@ export const LinearAutopilotRun = Schema.Struct({
   approvalPolicyVersion: Schema.NullOr(Schema.String),
   approvalProjectId: Schema.NullOr(ProjectId),
   approvalBaseRef: Schema.NullOr(Schema.String),
+  baseRef: Schema.NullOr(Schema.String),
   approvedBy: Schema.NullOr(Schema.String),
   approvedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
@@ -79,6 +80,7 @@ const TransitionRequest = Schema.Struct({
   approvalPolicyVersion: Schema.optional(Schema.NullOr(Schema.String)),
   approvalProjectId: Schema.optional(Schema.NullOr(ProjectId)),
   approvalBaseRef: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(255)))),
+  baseRef: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(255)))),
 });
 const ApprovalRequest = Schema.Struct({
   runId: Schema.String,
@@ -166,6 +168,7 @@ const make = Effect.gen(function* () {
         approval_policy_version AS "approvalPolicyVersion",
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
+        base_ref AS "baseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -198,6 +201,7 @@ const make = Effect.gen(function* () {
         approval_policy_version AS "approvalPolicyVersion",
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
+        base_ref AS "baseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -226,6 +230,7 @@ const make = Effect.gen(function* () {
         approval_policy_version AS "approvalPolicyVersion",
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
+        base_ref AS "baseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -273,6 +278,7 @@ const make = Effect.gen(function* () {
         approval_policy_version AS "approvalPolicyVersion",
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
+        base_ref AS "baseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -300,6 +306,7 @@ const make = Effect.gen(function* () {
         approval_policy_version AS "approvalPolicyVersion",
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
+        base_ref AS "baseRef",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -325,6 +332,7 @@ const make = Effect.gen(function* () {
       approvalPolicyVersion,
       approvalProjectId,
       approvalBaseRef,
+      baseRef,
     }) => sql`
       UPDATE linear_autopilot_runs
       SET state = ${nextState},
@@ -351,6 +359,11 @@ const make = Effect.gen(function* () {
             WHEN ${nextState} IN ('queued', 'planning') THEN NULL
             WHEN ${nextState} = 'needs_approval' THEN ${approvalBaseRef ?? null}
             ELSE approval_base_ref
+          END,
+          base_ref = CASE
+            WHEN ${nextState} = 'queued' THEN NULL
+            WHEN ${nextState} = 'planning' THEN COALESCE(${baseRef ?? null}, base_ref)
+            ELSE base_ref
           END,
           approved_by = CASE WHEN ${nextState} IN ('queued', 'planning') THEN NULL ELSE approved_by END,
           approved_at = CASE WHEN ${nextState} IN ('queued', 'planning') THEN NULL ELSE approved_at END

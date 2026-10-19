@@ -88,6 +88,10 @@ layer("LinearAutopilotPhaseAttemptRepository", (it) => {
       assert.equal(recoverable.length, 1);
       assert.equal(recoverable[0]?.status, "unknown");
       assert.equal(recoverable[0]?.threadId, "thread-1");
+      assert.equal(
+        (yield* attempts.getLatest({ runId: run.runId, phase: "planning" }))?.attemptId,
+        first.attempt.attemptId,
+      );
     }),
   );
 

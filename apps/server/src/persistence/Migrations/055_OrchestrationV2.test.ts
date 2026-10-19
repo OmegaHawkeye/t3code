@@ -42,6 +42,7 @@ layer("055_OrchestrationV2", (it) => {
         [68, "LinearAutopilotPollState"],
         [69, "LinearAutopilotPhaseAttempts"],
         [70, "LinearAutopilotIssueContext"],
+        [71, "LinearAutopilotRunBaseRef"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -78,6 +79,7 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 68, name: "LinearAutopilotPollState" },
         { migration_id: 69, name: "LinearAutopilotPhaseAttempts" },
         { migration_id: 70, name: "LinearAutopilotIssueContext" },
+        { migration_id: 71, name: "LinearAutopilotRunBaseRef" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

@@ -68,6 +68,7 @@ const MarkRunningRequest = Schema.Struct({
 const RecoverableAttemptsRequest = Schema.Struct({
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
 });
+const LatestAttemptRequest = Schema.Struct({ runId: Schema.String, phase: LinearAutopilotPhase });
 const AttemptCreated = Schema.Struct({
   attempt: LinearAutopilotPhaseAttempt,
   created: Schema.Boolean,
@@ -92,6 +93,9 @@ export class LinearAutopilotPhaseAttemptRepository extends Context.Service<
     readonly listRecoverable: (
       limit: number,
     ) => Effect.Effect<ReadonlyArray<LinearAutopilotPhaseAttempt>, PersistenceSqlErrorType>;
+    readonly getLatest: (
+      input: typeof LatestAttemptRequest.Type,
+    ) => Effect.Effect<LinearAutopilotPhaseAttempt | null, PersistenceSqlErrorType>;
   }
 >()("t3/persistence/LinearAutopilotPhaseAttempts/LinearAutopilotPhaseAttemptRepository") {}
 
@@ -170,6 +174,20 @@ const make = Effect.gen(function* () {
     `,
   });
 
+  const findLatest = SqlSchema.findOneOption({
+    Request: LatestAttemptRequest,
+    Result: LinearAutopilotPhaseAttempt,
+    execute: ({ runId, phase }) => sql`
+      SELECT attempt_id AS "attemptId", run_id AS "runId", phase,
+        attempt_number AS "attemptNumber", command_id AS "commandId", status,
+        thread_id AS "threadId", started_at AS "startedAt", finished_at AS "finishedAt", summary
+      FROM linear_autopilot_phase_attempts
+      WHERE run_id = ${runId} AND phase = ${phase}
+      ORDER BY attempt_number DESC
+      LIMIT 1
+    `,
+  });
+
   return LinearAutopilotPhaseAttemptRepository.of({
     begin: (input) =>
       sql
@@ -239,6 +257,11 @@ const make = Effect.gen(function* () {
         Effect.mapError(
           toPersistenceSqlError("LinearAutopilotPhaseAttempts.listRecoverable:query"),
         ),
+      ),
+    getLatest: (input) =>
+      findLatest(input).pipe(
+        Effect.map((row) => (row._tag === "Some" ? row.value : null)),
+        Effect.mapError(toPersistenceSqlError("LinearAutopilotPhaseAttempts.getLatest:query")),
       ),
   });
 });
