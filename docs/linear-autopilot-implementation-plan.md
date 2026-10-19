@@ -38,7 +38,7 @@ Replace the Larl-to-T3 Linear bridge with a native server-owned workflow: eligib
 
 ## Current branch state
 
-The branch contains migrations 066-067 and persistence repositories for issue intake/outbox and run state, plus approval checks bound to plan, policy, project, and base ref. The intake/run repositories are not connected to a Linear client, worker, T3 thread launcher, operator UI, or delivery adapter. No autonomous runs can be started by this persistence slice alone.
+The branch contains migrations 066-067 and persistence repositories for issue intake/outbox and run state, plus approval checks bound to plan, policy, project, and base ref. A pure intake policy now requires an explicitly configured OME team, ready state, trigger label, and Linear-project-to-T3-`ProjectId` mapping; shadow evaluation has no enqueue or launch side effects. The repositories are not yet connected to a Linear client, polling worker, T3 thread launcher, operator UI, or delivery adapter. No autonomous runs can be started by the current slices alone.
 
 ## Completion gates
 
