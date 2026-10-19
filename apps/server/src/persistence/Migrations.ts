@@ -69,6 +69,7 @@ import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
 import Migration0064 from "./Migrations/064_AuthSessionLifetime.ts";
 import Migration0065 from "./Migrations/065_AuthMcpRefreshTokens.ts";
 import Migration0066 from "./Migrations/066_LinearAutopilotIntake.ts";
+import Migration0067 from "./Migrations/067_LinearAutopilotRuns.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -138,6 +139,7 @@ export const migrationEntries = [
   [64, "AuthSessionLifetime", Migration0064],
   [65, "AuthMcpRefreshTokens", Migration0065],
   [66, "LinearAutopilotIntake", Migration0066],
+  [67, "LinearAutopilotRuns", Migration0067],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

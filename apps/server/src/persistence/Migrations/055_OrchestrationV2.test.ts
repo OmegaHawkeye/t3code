@@ -13,7 +13,7 @@ layer("055_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 66 }, (_, index) => index + 1),
+        Array.from({ length: 67 }, (_, index) => index + 1),
       );
     }),
   );
@@ -38,6 +38,7 @@ layer("055_OrchestrationV2", (it) => {
         [64, "AuthSessionLifetime"],
         [65, "AuthMcpRefreshTokens"],
         [66, "LinearAutopilotIntake"],
+        [67, "LinearAutopilotRuns"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -70,6 +71,7 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 64, name: "AuthSessionLifetime" },
         { migration_id: 65, name: "AuthMcpRefreshTokens" },
         { migration_id: 66, name: "LinearAutopilotIntake" },
+        { migration_id: 67, name: "LinearAutopilotRuns" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
