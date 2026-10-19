@@ -1,10 +1,17 @@
 import type { LinearAutopilotPendingApproval } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
 import { Button } from "../ui/button";
+
+const loadPendingApprovals = () =>
+  runPrimaryHttp(
+    PrimaryEnvironmentHttpClient.pipe(
+      Effect.flatMap((client) => client.linearAutopilot.listPendingApprovals({ headers: {} })),
+    ),
+  );
 
 export function LinearAutopilotApprovals() {
   const [approvals, setApprovals] = useState<ReadonlyArray<LinearAutopilotPendingApproval>>([]);
@@ -13,16 +20,9 @@ export function LinearAutopilotApprovals() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const refresh = async () => {
     try {
-      const result = await runPrimaryHttp(
-        PrimaryEnvironmentHttpClient.pipe(
-          Effect.flatMap((client) => client.linearAutopilot.listPendingApprovals({ headers: {} })),
-        ),
-      );
-      setApprovals(result);
+      setApprovals(await loadPendingApprovals());
     } catch {
       setError(
         "Could not load pending Linear approvals. Check the environment connection and try again.",
@@ -30,11 +30,29 @@ export function LinearAutopilotApprovals() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    let active = true;
+    const load = async () => {
+      try {
+        const result = await loadPendingApprovals();
+        if (active) setApprovals(result);
+      } catch {
+        if (active) {
+          setError(
+            "Could not load pending Linear approvals. Check the environment connection and try again.",
+          );
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const approve = async (item: LinearAutopilotPendingApproval) => {
     setPendingRunId(item.runId);
@@ -84,7 +102,16 @@ export function LinearAutopilotApprovals() {
             Review the saved plan and independent review before approving the exact plan revision.
           </p>
         </div>
-        <Button type="button" variant="outline" disabled={loading} onClick={() => void refresh()}>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={loading}
+          onClick={() => {
+            setLoading(true);
+            setError(null);
+            void refresh();
+          }}
+        >
           Refresh
         </Button>
       </header>
