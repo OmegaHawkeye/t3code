@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Link } from "@tanstack/react-router";
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
+import { resolvePrimaryEnvironmentHttpUrl } from "../../environments/primary/target";
 import { runPrimaryHttp } from "../../lib/runtime";
 import {
   useScopedSettings,
@@ -20,13 +21,23 @@ import {
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const REDACTED_SECRET = "••••••";
+const linearOAuthRedirectUri = () =>
+  new URL("/api/linear-autopilot/oauth/callback", resolvePrimaryEnvironmentHttpUrl("/")).toString();
 
 async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
   if (!credentialsConfigured) {
-    return { catalog: null, projects: [], error: null };
+    return { connected: false, catalog: null, projects: [], error: null };
   }
 
   try {
+    const status = await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) => client.linearAutopilot.oauthStatus({ headers: {} })),
+      ),
+    );
+    if (!status.connected) {
+      return { connected: false, catalog: null, projects: [], error: null };
+    }
     const catalog = await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
         Effect.flatMap((client) => client.linearAutopilot.catalog({ headers: {} })),
@@ -39,12 +50,14 @@ async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
         ),
       );
       return {
+        connected: true,
         catalog,
         projects: projectSnapshot.projects.filter((project) => project.deletedAt === null),
         error: null,
       };
     } catch {
       return {
+        connected: true,
         catalog,
         projects: [],
         error: "Linear is connected, but T3 project options could not be loaded.",
@@ -52,11 +65,10 @@ async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
     }
   } catch {
     return {
+      connected: false,
       catalog: null,
       projects: [],
-      error: credentialsConfigured
-        ? "Could not load Linear options. Check the Linear connection and server permissions, then retry."
-        : "Connect Linear by saving the app client ID and secret, then reload options.",
+      error: "Could not check the Linear connection. Check the server connection, then retry.",
     };
   }
 }
@@ -85,8 +97,18 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [clearClientSecret, setClearClientSecret] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<LinearAutopilotCatalog | null>(null);
+  const [linearConnected, setLinearConnected] = useState(false);
   const [projects, setProjects] = useState<ProjectSnapshot["projects"]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [oauthBusy, setOauthBusy] = useState(false);
+  const [oauthNotice, setOauthNotice] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const result = new URLSearchParams(window.location.search).get("linearOAuth");
+    if (result === "connected") return "Linear workspace connected.";
+    if (result === "denied") return "Linear authorization was cancelled.";
+    if (result === "failed") return "Linear authorization failed. Please try again.";
+    return null;
+  });
   const credentialsConfigured =
     settings.clientId === REDACTED_SECRET && settings.clientSecret === REDACTED_SECRET;
   const [loadingCatalog, setLoadingCatalog] = useState(credentialsConfigured);
@@ -98,6 +120,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     setLoadingCatalog(true);
     void fetchAutopilotCatalog(credentialsConfigured).then((result) => {
       setCatalog(result.catalog);
+      setLinearConnected(result.connected);
       setProjects(result.projects);
       setCatalogError(result.error);
       setLoadingCatalog(false);
@@ -109,6 +132,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     void fetchAutopilotCatalog(credentialsConfigured).then((result) => {
       if (cancelled) return;
       setCatalog(result.catalog);
+      setLinearConnected(result.connected);
       setProjects(result.projects);
       setCatalogError(result.error);
       setLoadingCatalog(false);
@@ -118,8 +142,50 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     };
   }, [credentialsConfigured]);
 
+  const connectLinear = async () => {
+    setOauthBusy(true);
+    setCatalogError(null);
+    try {
+      const result = await runPrimaryHttp(
+        PrimaryEnvironmentHttpClient.pipe(
+          Effect.flatMap((client) =>
+            client.linearAutopilot.oauthStart({
+              headers: { origin: window.location.origin },
+            }),
+          ),
+        ),
+      );
+      window.location.assign(result.authorizationUrl);
+    } catch {
+      setCatalogError(
+        "Could not start Linear sign-in. Check the saved OAuth app credentials, then retry.",
+      );
+      setOauthBusy(false);
+    }
+  };
+
+  const disconnectLinear = async () => {
+    setOauthBusy(true);
+    setCatalogError(null);
+    try {
+      await runPrimaryHttp(
+        PrimaryEnvironmentHttpClient.pipe(
+          Effect.flatMap((client) => client.linearAutopilot.oauthDisconnect({ headers: {} })),
+        ),
+      );
+      setLinearConnected(false);
+      setCatalog(null);
+      setProjects([]);
+      setOauthNotice("Linear workspace disconnected.");
+    } catch {
+      setCatalogError("Could not disconnect Linear. Check the server connection, then retry.");
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
   const selectedTeam = catalog?.teams.find((team) => team.id === teamId);
-  const connected = catalog !== null;
+  const connected = linearConnected;
   const knownStateIds = new Set(selectedTeam?.states.map((state) => state.id) ?? []);
   const knownLabelIds = new Set(selectedTeam?.labels.map((label) => label.id) ?? []);
   const mappingProjectIds = [
@@ -238,6 +304,41 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
             </div>
           }
         />
+        <SettingsRow
+          title="Linear workspace connection"
+          description={
+            connected
+              ? "Linear is connected for this server."
+              : "Save the OAuth app credentials, then sign in to authorize a Linear workspace."
+          }
+          control={
+            <Button
+              type="button"
+              variant={connected ? "outline" : "default"}
+              disabled={!writeAllowed || !credentialsConfigured || oauthBusy || loadingCatalog}
+              onClick={() => void (connected ? disconnectLinear() : connectLinear())}
+            >
+              {oauthBusy ? "Working…" : connected ? "Disconnect Linear" : "Sign in with Linear"}
+            </Button>
+          }
+        />
+        <SettingsRow
+          title="OAuth callback URL"
+          description="Register this exact URL in the Linear OAuth application before signing in."
+          control={
+            <Input
+              aria-label="Linear OAuth callback URL"
+              readOnly
+              value={linearOAuthRedirectUri()}
+              className="w-full @min-[32rem]/settings-row:w-96"
+            />
+          }
+        />
+        {oauthNotice ? (
+          <p className="px-4 text-sm text-muted-foreground" role="status">
+            {oauthNotice}
+          </p>
+        ) : null}
         {catalogError ? (
           <div className="px-4 text-sm text-destructive" role="alert">
             {catalogError}{" "}
@@ -253,13 +354,13 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           <p className="px-4 text-sm text-muted-foreground" role="status">
             Connecting to Linear…
           </p>
-        ) : !connected ? (
+        ) : !connected && credentialsConfigured ? (
           <p className="px-4 text-sm text-muted-foreground" role="status">
-            Save the Linear credentials above to enable the settings below.
+            Sign in with Linear to load teams, statuses, labels, and projects.
           </p>
         ) : null}
         <SettingsRow
-          title="Pending plan approvals"
+          title="Autopilot approvals"
           description="Review saved plans and their independent reviews on the dedicated approvals page."
           control={
             <Button render={<Link to="/settings/linear-autopilot/approvals" />} variant="outline">

@@ -59,7 +59,7 @@ export function AutopilotIntegrationsPanel() {
           />
         ))}
       </SettingsSection>
-      <SettingsSection title="Plan approvals">
+      <SettingsSection title="Approvals">
         <SettingsRow
           title="Review pending plans"
           description="Review saved plans and their independent reviews."
