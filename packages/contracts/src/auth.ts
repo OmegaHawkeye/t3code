@@ -27,6 +27,9 @@ export const ServerAuthSessionMethod = Schema.Literals([
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
+export const AuthSessionKind = Schema.Literals(["session", "oauth-grant", "long-lived-token"]);
+export type AuthSessionKind = typeof AuthSessionKind.Type;
+
 export const AuthOrchestrationReadScope = "orchestration:read" as const;
 export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
 export const AuthSettingsWriteScope = "settings:write" as const;
@@ -274,11 +277,24 @@ export const AuthClientMetadata = Schema.Struct({
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 
+export const AuthMcpClientAccess = Schema.Literals([
+  "read-only",
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+]);
+export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
+
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
   ...authScopeResponseFields,
   method: ServerAuthSessionMethod,
+  kind: AuthSessionKind,
+  renewable: Schema.Boolean,
+  // Only MCP client sessions carry an access level; it is null for every other session.
+  access: Schema.NullOr(AuthMcpClientAccess),
   client: AuthClientMetadata,
   issuedAt: Schema.DateTimeUtc,
   expiresAt: Schema.DateTimeUtc,
@@ -391,14 +407,18 @@ export const AuthSessionState = Schema.Struct({
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
 
-export const AuthMcpClientAccess = Schema.Literals([
-  "read-only",
-  "approval-required",
-  "auto-accept-edits",
-  "auto",
-  "full-access",
-]);
-export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
+export const AuthCreateLongLivedTokenInput = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  access: AuthMcpClientAccess,
+});
+export type AuthCreateLongLivedTokenInput = typeof AuthCreateLongLivedTokenInput.Type;
+
+export const AuthLongLivedTokenResult = Schema.Struct({
+  sessionId: AuthSessionId,
+  token: Schema.String,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type AuthLongLivedTokenResult = typeof AuthLongLivedTokenResult.Type;
 
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
@@ -415,7 +435,7 @@ export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
   token_endpoint: Schema.String,
   registration_endpoint: Schema.String,
   response_types_supported: Schema.Array(Schema.Literal("code")),
-  grant_types_supported: Schema.Array(Schema.Literal("authorization_code")),
+  grant_types_supported: Schema.Array(Schema.Literals(["authorization_code", "refresh_token"])),
   code_challenge_methods_supported: Schema.Array(Schema.Literal("S256")),
   token_endpoint_auth_methods_supported: Schema.Array(Schema.Literal("none")),
   scopes_supported: Schema.Array(AuthEnvironmentScope),
@@ -523,6 +543,7 @@ export const AuthMcpTokenRequest = Schema.Struct({
   client_id: Schema.optionalKey(Schema.String),
   code_verifier: Schema.optionalKey(Schema.String),
   resource: Schema.optionalKey(Schema.String),
+  refresh_token: Schema.optionalKey(Schema.String),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthMcpTokenRequest = typeof AuthMcpTokenRequest.Type;
 
@@ -531,6 +552,7 @@ export const AuthMcpTokenResult = Schema.Struct({
   token_type: Schema.Literal("Bearer"),
   expires_in: Schema.Number,
   scope: Schema.String,
+  refresh_token: Schema.optionalKey(Schema.String),
 });
 export type AuthMcpTokenResult = typeof AuthMcpTokenResult.Type;
 

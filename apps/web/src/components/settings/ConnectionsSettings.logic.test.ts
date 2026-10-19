@@ -3,9 +3,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   canRevokeOtherClients,
+  clientExpiryLabel,
+  longLivedTokenAccessLabel,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
+  splitClientSessions,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
 
@@ -228,7 +231,77 @@ describe("canRevokeOtherClients", () => {
 
   it("disables revocation only when a loaded list has no other clients", () => {
     expect(canRevokeOtherClients([])).toBe(false);
-    expect(canRevokeOtherClients([{ current: true }])).toBe(false);
-    expect(canRevokeOtherClients([{ current: true }, { current: false }])).toBe(true);
+    expect(canRevokeOtherClients([{ current: true, kind: "session" }])).toBe(false);
+    expect(
+      canRevokeOtherClients([
+        { current: true, kind: "session" },
+        { current: false, kind: "session" },
+      ]),
+    ).toBe(true);
+  });
+});
+
+const clientSession = (overrides: {
+  kind?: "session" | "oauth-grant" | "long-lived-token";
+  renewable?: boolean;
+  expiresAt?: string;
+}) => ({
+  kind: "session" as const,
+  renewable: false,
+  expiresAt: "2026-01-02T00:00:00.000Z",
+  ...overrides,
+});
+
+describe("splitClientSessions", () => {
+  it("splits long-lived tokens from other clients", () => {
+    const { clients, longLivedTokens } = splitClientSessions([
+      clientSession({ kind: "session" }),
+      clientSession({ kind: "long-lived-token" }),
+      clientSession({ kind: "oauth-grant" }),
+    ]);
+    expect(longLivedTokens.map((s) => s.kind)).toEqual(["long-lived-token"]);
+    expect(clients.map((s) => s.kind)).toEqual(["session", "oauth-grant"]);
+  });
+});
+
+describe("clientExpiryLabel", () => {
+  const nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+
+  it("labels renewable sessions as renewing on use", () => {
+    expect(clientExpiryLabel(clientSession({ renewable: true }), nowMs)).toBe("Renews on use");
+  });
+
+  it("formats the remaining time for fixed-expiry sessions", () => {
+    expect(clientExpiryLabel(clientSession({}), nowMs)).toBe("Expires in 1d");
+  });
+});
+
+describe("longLivedTokenAccessLabel", () => {
+  it.each([
+    { access: "read-only", expected: "Read only" },
+    { access: "approval-required", expected: "Approval required" },
+    { access: "auto-accept-edits", expected: "Auto-accept edits" },
+    { access: "auto", expected: "Auto" },
+    { access: "full-access", expected: "Full access" },
+    { access: null, expected: "Unknown" },
+  ] as const)("maps $access to $expected", ({ access, expected }) => {
+    expect(longLivedTokenAccessLabel(access)).toBe(expected);
+  });
+});
+
+describe("canRevokeOtherClients with long-lived tokens", () => {
+  it("ignores long-lived tokens", () => {
+    expect(
+      canRevokeOtherClients([
+        { current: true, kind: "session" },
+        { current: false, kind: "long-lived-token" },
+      ]),
+    ).toBe(false);
+    expect(
+      canRevokeOtherClients([
+        { current: true, kind: "session" },
+        { current: false, kind: "oauth-grant" },
+      ]),
+    ).toBe(true);
   });
 });

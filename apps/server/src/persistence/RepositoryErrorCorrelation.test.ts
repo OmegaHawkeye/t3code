@@ -48,6 +48,9 @@ describe("persistence error correlation", () => {
         },
         issuedAt,
         expiresAt,
+        renewable: false,
+        kind: "session",
+        runtimeModeCeiling: null,
       });
       yield* sql`
         UPDATE auth_sessions
@@ -83,6 +86,9 @@ describe("persistence error correlation", () => {
           },
           issuedAt,
           expiresAt,
+          renewable: false,
+          kind: "session",
+          runtimeModeCeiling: null,
         }),
       );
       assert.instanceOf(createError, PersistenceErrors.PersistenceSqlError);

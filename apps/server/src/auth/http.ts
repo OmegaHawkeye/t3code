@@ -271,7 +271,7 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            const result = yield* serverAuth.getSessionState(request);
+            const { renewable, ...result } = yield* serverAuth.getSessionState(request);
             const credential = EnvironmentAuth.selectRequestCredential(
               request,
               sessions.cookieName,
@@ -283,6 +283,18 @@ export const layer = HttpApiBuilder.group(
               result.sessionMethod === "browser-session-cookie" &&
               result.expiresAt
             ) {
+              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
+              yield* appendCredentialResponseHeaders;
+            } else if (
+              credential &&
+              EnvironmentAuth.isBrowserCookieCredential(credential.source) &&
+              result.authenticated &&
+              renewable &&
+              result.expiresAt
+            ) {
+              // Any authenticated request can extend the row, but the browser only
+              // learns the new date here; re-send every time so the cookie never
+              // expires before its live row.
               yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
               yield* appendCredentialResponseHeaders;
             }
@@ -446,6 +458,29 @@ export const layer = HttpApiBuilder.group(
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "createLongLivedToken",
+        Effect.fn("environment.auth.createLongLivedToken")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            // A token must not out-reach the credential that mints it.
+            for (const scope of EnvironmentAuth.mcpClientScopes(args.payload.access)) {
+              if (!session.scopes.has(scope)) {
+                return yield* failEnvironmentScopeRequired(scope);
+              }
+            }
+            return yield* serverAuth.issueLongLivedToken({
+              label: args.payload.label,
+              access: args.payload.access,
+              client: { label: args.payload.label, deviceType: "bot" },
+            });
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("long_lived_token_issuance_failed", error),
           ),
         ),
       )

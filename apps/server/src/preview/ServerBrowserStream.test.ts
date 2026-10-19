@@ -42,6 +42,7 @@ const makeAuth = (
             subject: "stream-test",
             method: "bearer-access-token",
             scopes,
+            renewable: false,
           });
     },
   });

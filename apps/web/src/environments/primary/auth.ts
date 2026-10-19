@@ -1,8 +1,11 @@
 import type {
   AuthBrowserSessionResult,
   AuthClientMetadata,
+  AuthClientSession,
   AuthEnvironmentScope,
   AuthGrantScope,
+  AuthLongLivedTokenResult,
+  AuthMcpClientAccess,
   AuthPairingCredentialResult,
   ServerAuthSessionMethod,
   AuthSessionId,
@@ -27,6 +30,7 @@ const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "exchange-bootstrap-credential",
   "fetch-environment-descriptor",
   "create-pairing-credential",
+  "create-long-lived-token",
   "list-pairing-links",
   "revoke-pairing-link",
   "list-client-sessions",
@@ -129,6 +133,9 @@ export interface ServerClientSessionRecord {
   readonly lastConnectedAt: string | null;
   readonly connected: boolean;
   readonly current: boolean;
+  readonly kind: AuthClientSession["kind"];
+  readonly renewable: boolean;
+  readonly access: AuthClientSession["access"];
 }
 
 type ServerAuthGateState =
@@ -375,6 +382,29 @@ export async function createServerPairingCredential(input?: {
   } catch (error) {
     throw PrimaryEnvironmentRequestError.fromCause({
       operation: "create-pairing-credential",
+      cause: error,
+    });
+  }
+}
+
+export async function createServerLongLivedToken(input: {
+  readonly label: string;
+  readonly access: AuthMcpClientAccess;
+}): Promise<AuthLongLivedTokenResult> {
+  try {
+    return await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.createLongLivedToken({
+            headers: {},
+            payload: { label: input.label.trim(), access: input.access },
+          }),
+        ),
+      ),
+    );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "create-long-lived-token",
       cause: error,
     });
   }

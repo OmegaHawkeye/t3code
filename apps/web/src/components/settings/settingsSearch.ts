@@ -956,6 +956,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "auth-idle-period",
+    title: "Authentication idle period",
+    to: "/settings/connections",
+    targetId: "remote-environments",
+    searchTerms: [
+      "session lifetime long lived auth refresh token idle expiry keep signed in days 90",
+    ],
+  },
+  {
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",

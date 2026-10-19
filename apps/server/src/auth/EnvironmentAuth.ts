@@ -10,6 +10,7 @@ import {
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
   type AuthClientSession,
+  type AuthLongLivedTokenResult,
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
   type AuthMcpClientAccess,
@@ -40,11 +41,14 @@ import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import * as SessionLifetime from "./SessionLifetime.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -75,7 +79,9 @@ export interface IssuedBearerSession {
  * cannot reach the full RPC surface around that cap.
  */
 const MCP_CLIENT_SUBJECT = "mcp-client";
-const MCP_CLIENT_SESSION_TTL = Duration.days(30);
+// Short because the grant row, not the access token, carries the long idle lifetime;
+// clients stay signed in by refreshing.
+export const MCP_CLIENT_ACCESS_TOKEN_TTL = Duration.hours(1);
 
 export const mcpClientScopes = (
   access: AuthMcpClientAccess,
@@ -91,10 +97,22 @@ export const mcpClientScopes = (
         ]
       : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
+// Fixed lifetime, like `claude setup-token`: revoke it to end access sooner.
+export const LONG_LIVED_TOKEN_TTL = Duration.days(360);
+
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
+}
+
+export interface McpClientGrantToken {
+  readonly sessionId: AuthSessionId;
+  readonly token: string;
+  readonly expiresAt: DateTime.Utc;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  /** When the grant lapses unless it is refreshed again. */
+  readonly grantExpiresAt: DateTime.Utc;
 }
 
 export interface AuthenticatedSession {
@@ -104,6 +122,7 @@ export interface AuthenticatedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  readonly renewable: boolean;
 }
 
 const serverAuthInternalErrorContext = {
@@ -468,7 +487,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
     readonly getSessionState: (
       request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<AuthSessionState, ServerAuthInternalError>;
+    ) => Effect.Effect<
+      AuthSessionState & { readonly renewable?: boolean },
+      ServerAuthInternalError
+    >;
     readonly createBrowserSession: (
       credential: string,
       requestMetadata: AuthClientMetadata,
@@ -557,9 +579,26 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly client: AuthClientMetadata;
-    }) => Effect.Effect<
-      { readonly token: string; readonly expiresAt: DateTime.DateTime },
-      ServerAuthInternalError
+    }) => Effect.Effect<McpClientGrantToken, ServerAuthInternalError>;
+    /**
+     * Issues a fixed 360-day bearer token for headless services. It uses the MCP
+     * client subject, so `/mcp` accepts it within `access` and nothing else does.
+     */
+    readonly issueLongLivedToken: (input: {
+      readonly label: string;
+      readonly access: AuthMcpClientAccess;
+      readonly client: AuthClientMetadata;
+    }) => Effect.Effect<AuthLongLivedTokenResult, ServerAuthInternalError>;
+    /**
+     * Signs a fresh access token for an existing MCP grant and moves the grant's idle
+     * deadline forward. Fails with an invalid credential for a revoked or expired grant.
+     */
+    readonly renewMcpClientSession: (
+      sessionId: AuthSessionId,
+      issuedAt?: DateTime.Utc,
+    ) => Effect.Effect<
+      McpClientGrantToken,
+      ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
     /**
      * Spends a one-time pairing code as approval for an MCP client with the
@@ -722,6 +761,8 @@ export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
+  const authSessions = yield* AuthSessions.AuthSessionRepository;
+  const sessionLifetime = yield* SessionLifetime.SessionLifetime;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
@@ -753,6 +794,7 @@ export const make = Effect.gen(function* () {
         scopes: session.scopes,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        renewable: session.renewable,
       })),
     );
 
@@ -843,7 +885,8 @@ export const make = Effect.gen(function* () {
             ...authScopeResponse(session.scopes),
             sessionMethod: session.method,
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
-          }) satisfies AuthSessionState,
+            renewable: session.renewable,
+          }) satisfies AuthSessionState & { readonly renewable?: boolean },
       ),
       Effect.catchIf(isServerAuthCredentialError, () =>
         Effect.succeed({
@@ -896,6 +939,7 @@ export const make = Effect.gen(function* () {
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        renewable: true,
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -976,12 +1020,13 @@ export const make = Effect.gen(function* () {
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
+                // Keep DPoP proof binding while letting active paired clients renew on use.
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
+                      renewable: true,
                     }
-                  : {}),
+                  : { renewable: true }),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,
@@ -1249,6 +1294,7 @@ export const make = Effect.gen(function* () {
               method: session.method,
               scopes: session.scopes,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+              renewable: session.renewable,
             })),
           );
         }
@@ -1281,21 +1327,101 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
-    sessions
-      .issue({
+  // Fixed, not renewable: `verify` must keep enforcing the one-hour claim, and only the
+  // refresh grant moves the row's idle deadline.
+  const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = Effect.fn(
+    "EnvironmentAuth.issueMcpClientSession",
+  )(
+    function* (input) {
+      const idlePeriod = yield* sessionLifetime.idlePeriod;
+      const issued = yield* sessions.issue({
         subject: MCP_CLIENT_SUBJECT,
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
-        ttl: MCP_CLIENT_SESSION_TTL,
+        ttl: MCP_CLIENT_ACCESS_TOKEN_TTL,
+        sessionTtl: idlePeriod,
+        renewable: false,
+        kind: "oauth-grant",
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         client: { ...input.client, label: input.label, deviceType: "bot" },
+      });
+      return {
+        sessionId: issued.sessionId,
+        token: issued.token,
+        expiresAt: DateTime.toUtc(issued.expiresAt),
+        scopes: issued.scopes,
+        grantExpiresAt: yield* DateTime.now.pipe(
+          Effect.map((now) => DateTime.add(now, { milliseconds: Duration.toMillis(idlePeriod) })),
+        ),
+      } satisfies McpClientGrantToken;
+    },
+    Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
+  );
+
+  const issueLongLivedToken: EnvironmentAuth["Service"]["issueLongLivedToken"] = Effect.fn(
+    "EnvironmentAuth.issueLongLivedToken",
+  )(
+    function* (input) {
+      const issued = yield* sessions.issue({
+        subject: MCP_CLIENT_SUBJECT,
+        method: "bearer-access-token",
+        scopes: mcpClientScopes(input.access),
+        ttl: LONG_LIVED_TOKEN_TTL,
+        renewable: false,
+        kind: "long-lived-token",
+        ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
+        client: { ...input.client, label: input.label, deviceType: "bot" },
+      });
+      return {
+        sessionId: issued.sessionId,
+        token: issued.token,
+        expiresAt: DateTime.toUtc(issued.expiresAt),
+      } satisfies AuthLongLivedTokenResult;
+    },
+    Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
+  );
+
+  const renewMcpClientSession: EnvironmentAuth["Service"]["renewMcpClientSession"] = Effect.fn(
+    "EnvironmentAuth.renewMcpClientSession",
+  )(function* (sessionId, issuedAt) {
+    const issued = yield* sessions
+      .issueAccessToken({
+        sessionId,
+        ttl: MCP_CLIENT_ACCESS_TOKEN_TTL,
+        ...(issuedAt === undefined ? {} : { issuedAt }),
       })
       .pipe(
-        Effect.map((issued) => ({ token: issued.token, expiresAt: issued.expiresAt })),
-        Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
-        Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),
+        Effect.mapError((cause) =>
+          cause._tag === "SessionAccessTokenRefusedError"
+            ? new ServerAuthInvalidCredentialError({
+                diagnostic: `MCP grant cannot be renewed (${cause.reason}).`,
+              })
+            : new ServerAuthSessionTokenIssueError({ cause }),
+        ),
       );
+    const renewalTime = issuedAt ?? (yield* DateTime.now);
+    const requestedGrantExpiry = DateTime.add(renewalTime, {
+      milliseconds: Duration.toMillis(yield* sessionLifetime.idlePeriod),
+    });
+    const currentSession = yield* authSessions
+      .getById({ sessionId })
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
+    if (Option.isNone(currentSession) || currentSession.value.revokedAt !== null) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "MCP grant cannot be renewed because its session is no longer active.",
+      });
+    }
+    const grantExpiresAt = DateTime.makeUnsafe(
+      Math.max(
+        currentSession.value.expiresAt.epochMilliseconds,
+        requestedGrantExpiry.epochMilliseconds,
+      ),
+    );
+    yield* authSessions
+      .setExpiresAt({ sessionId, expiresAt: grantExpiresAt })
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
+    return { sessionId, ...issued, grantExpiresAt } satisfies McpClientGrantToken;
+  });
 
   const authenticateBrowserSession: EnvironmentAuth["Service"]["authenticateBrowserSession"] = (
     request,
@@ -1358,6 +1484,8 @@ export const make = Effect.gen(function* () {
     issueStartupPairingUrl,
     authenticateMcpClient,
     issueMcpClientSession,
+    issueLongLivedToken,
+    renewMcpClientSession,
     consumeMcpApprovalCode,
     authenticateBrowserSession,
   });
@@ -1372,6 +1500,7 @@ export const layer = Layer.effect(EnvironmentAuth, make).pipe(
 const layerStorage = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerConfig);
 
 export const layerRuntime = layer.pipe(
+  Layer.provide(SessionLifetime.layer.pipe(Layer.provide(ServerSettings.layer))),
   Layer.provideMerge(layerStorage),
   Layer.provideMerge(ServerEnvironment.layerIdentity),
 );

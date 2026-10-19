@@ -1,12 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthSessionId,
   AuthStandardClientScopes,
   type AuthCreatePairingCredentialInput,
+  type AuthMcpClientAccess,
+  type AuthMcpTokenResult,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Etag from "effect/http/Etag";
@@ -16,11 +20,13 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as SessionLifetime from "./SessionLifetime.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -32,7 +38,8 @@ class AuthTestApi extends HttpApi.make("environment")
 
 const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-oauth-test-" });
 const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
-  Layer.provide(Sqlite.layerMemory),
+  Layer.provide(SessionLifetime.layerFixed(Duration.days(90))),
+  Layer.provideMerge(Sqlite.layerMemory),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
@@ -563,4 +570,203 @@ it("matches loopback redirects on everything but the port, and https redirects e
   expect(matches("https://bot.example/cb", "https://bot.example:8443/cb")).toBe(false);
   expect(matches("https://bot.example/cb", "https://bot.example/cb?x=1")).toBe(false);
   expect(matches("https://bot.example/cb", "https://evil.example/cb")).toBe(false);
+});
+
+const IDLE_PERIOD = Duration.days(90);
+const urls: McpOAuth.McpOAuthUrls = { issuer: ORIGIN, resource: `${ORIGIN}/mcp` };
+const CALLBACK = "http://localhost:51234/callback";
+
+// Built per test so the services read the test's clock.
+const layerOAuth = McpOAuth.layer.pipe(
+  Layer.provideMerge(layerEnvironmentAuth),
+  Layer.provide(layerConfig),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+const tokenRequest = (path = "/oauth/mcp/token", bearer?: string) =>
+  HttpServerRequest.fromWeb(
+    at(path, bearer === undefined ? undefined : { headers: { authorization: `Bearer ${bearer}` } }),
+  );
+
+const signIn = (access: AuthMcpClientAccess = "auto") =>
+  Effect.gen(function* () {
+    const oauth = yield* McpOAuth.McpOAuth;
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const client = yield* oauth.register({ client_name: "Claude Code", redirect_uris: [REDIRECT] });
+    const authorization = yield* oauth.validateAuthorization({
+      urls,
+      request: {
+        response_type: "code",
+        client_id: client.clientId,
+        redirect_uri: CALLBACK,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        state: "state-1",
+        resource: urls.resource,
+      },
+    });
+    const pairing = yield* auth.issuePairingCredential();
+    const redirect = yield* oauth.approve({
+      request: tokenRequest(),
+      authorization,
+      decision: { _tag: "pairing-code", access, code: pairing.credential },
+    });
+    const token = yield* oauth.exchangeCode({
+      request: tokenRequest(),
+      urls,
+      token: {
+        grant_type: "authorization_code",
+        code: new URL(redirect).searchParams.get("code")!,
+        redirect_uri: CALLBACK,
+        client_id: client.clientId,
+        code_verifier: verifier,
+      },
+    });
+    return { clientId: client.clientId, token };
+  });
+
+const refresh = (clientId: string, refreshToken: string | undefined) =>
+  McpOAuth.McpOAuth.pipe(
+    Effect.flatMap((oauth) =>
+      oauth.exchangeCode({
+        request: tokenRequest(),
+        urls,
+        token: {
+          grant_type: "refresh_token",
+          ...(refreshToken === undefined ? {} : { refresh_token: refreshToken }),
+          client_id: clientId,
+        },
+      }),
+    ),
+  );
+
+const refreshError = (clientId: string, refreshToken: string | undefined) =>
+  refresh(clientId, refreshToken).pipe(
+    Effect.flip,
+    Effect.map((error) => error.error),
+  );
+
+const authenticate = (token: AuthMcpTokenResult) =>
+  EnvironmentAuth.EnvironmentAuth.pipe(
+    Effect.flatMap((auth) => auth.authenticateMcpClient(tokenRequest("/mcp", token.access_token))),
+  );
+
+const authenticates = (token: AuthMcpTokenResult) =>
+  authenticate(token).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+
+it.effect("returns a refresh token with the first access token", () =>
+  Effect.gen(function* () {
+    const { token } = yield* signIn();
+    expect(token.refresh_token).toMatch(/^[A-Za-z0-9_-]{43,}$/);
+    expect(token.expires_in).toBe(3600);
+    expect(yield* authenticates(token)).toBe(true);
+    yield* TestClock.adjust(Duration.minutes(61));
+    expect(yield* authenticates(token)).toBe(false);
+  }).pipe(Effect.provide(layerOAuth)),
+);
+
+it.effect("refreshes and rotates, keeping the same session id", () =>
+  Effect.gen(function* () {
+    const { clientId, token } = yield* signIn();
+    const original = yield* authenticate(token);
+    yield* TestClock.adjust(Duration.minutes(61));
+    const refreshed = yield* refresh(clientId, token.refresh_token);
+    expect(refreshed.access_token).not.toBe(token.access_token);
+    expect(refreshed.refresh_token).toEqual(expect.any(String));
+    expect(refreshed.refresh_token).not.toBe(token.refresh_token);
+    expect(refreshed.expires_in).toBe(3600);
+    expect(refreshed.scope).toBe("orchestration:read orchestration:operate");
+    expect((yield* authenticate(refreshed)).sessionId).toBe(original.sessionId);
+
+    const again = yield* refresh(clientId, refreshed.refresh_token);
+    expect((yield* authenticate(again)).sessionId).toBe(original.sessionId);
+    expect(yield* refreshError(clientId, "not-a-refresh-token")).toBe("invalid_grant");
+    expect(yield* refreshError(clientId, undefined)).toBe("invalid_request");
+  }).pipe(Effect.provide(layerOAuth)),
+);
+
+it.effect("returns the same new pair to a second refresh within 30 seconds", () =>
+  Effect.gen(function* () {
+    const { clientId, token } = yield* signIn();
+    const first = yield* refresh(clientId, token.refresh_token);
+    yield* TestClock.adjust(Duration.seconds(10));
+    const second = yield* refresh(clientId, token.refresh_token);
+    expect(second.access_token).toBe(first.access_token);
+    expect(second.refresh_token).toBe(first.refresh_token);
+    expect(second.expires_in).toBe(3590);
+    const firstSession = yield* authenticate(first);
+    const secondSession = yield* authenticate(second);
+    expect(secondSession.sessionId).toBe(firstSession.sessionId);
+
+    const next = yield* refresh(clientId, first.refresh_token);
+    expect((yield* authenticate(next)).sessionId).toBe(firstSession.sessionId);
+  }).pipe(Effect.provide(layerOAuth)),
+);
+
+it.effect("lets only one of two concurrent refreshes rotate", () =>
+  Effect.gen(function* () {
+    const { clientId, token } = yield* signIn();
+    const [left, right] = yield* Effect.all(
+      [refresh(clientId, token.refresh_token), refresh(clientId, token.refresh_token)],
+      { concurrency: "unbounded" },
+    );
+    expect(left.access_token).toBe(right.access_token);
+    expect(left.refresh_token).toBe(right.refresh_token);
+    expect(yield* authenticates(left)).toBe(true);
+    expect(yield* authenticates(right)).toBe(true);
+  }).pipe(Effect.provide(layerOAuth)),
+);
+
+it.effect("revokes the grant when a rotated token is replayed after 30 seconds", () =>
+  Effect.gen(function* () {
+    const { clientId, token } = yield* signIn();
+    const rotated = yield* refresh(clientId, token.refresh_token);
+    yield* TestClock.adjust(Duration.seconds(31));
+    expect(yield* refreshError(clientId, token.refresh_token)).toBe("invalid_grant");
+    expect(yield* refreshError(clientId, rotated.refresh_token)).toBe("invalid_grant");
+    expect(yield* authenticates(rotated)).toBe(false);
+  }).pipe(Effect.provide(layerOAuth)),
+);
+
+it.effect("rejects refresh after the client is revoked", () =>
+  Effect.gen(function* () {
+    const { clientId, token } = yield* signIn();
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const { sessionId } = yield* authenticate(token);
+    expect(yield* auth.revokeClientSession(AuthSessionId.make("admin-session"), sessionId)).toBe(
+      true,
+    );
+    expect(yield* refreshError(clientId, token.refresh_token)).toBe("invalid_grant");
+  }).pipe(Effect.provide(layerOAuth)),
+);
+
+it.effect("keeps the runtime ceiling across refreshes", () =>
+  Effect.gen(function* () {
+    const { clientId, token } = yield* signIn("auto-accept-edits");
+    const refreshed = yield* refresh(clientId, token.refresh_token);
+    expect((yield* authenticate(refreshed)).access).toBe("auto-accept-edits");
+  }).pipe(Effect.provide(layerOAuth)),
+);
+
+it.effect("expires a grant that is not refreshed within the idle period", () =>
+  Effect.gen(function* () {
+    const { clientId, token } = yield* signIn();
+    yield* TestClock.adjust(Duration.days(60));
+    const refreshed = yield* refresh(clientId, token.refresh_token);
+    // Refreshing moved the idle deadline, so 60 more days is still inside it.
+    yield* TestClock.adjust(Duration.days(60));
+    const kept = yield* refresh(clientId, refreshed.refresh_token);
+    yield* TestClock.adjust(Duration.sum(IDLE_PERIOD, Duration.days(1)));
+    expect(yield* refreshError(clientId, kept.refresh_token)).toBe("invalid_grant");
+  }).pipe(Effect.provide(layerOAuth)),
+);
+
+it("advertises the refresh_token grant", () => {
+  expect(McpOAuth.authorizationServerMetadata(urls).grant_types_supported).toEqual([
+    "authorization_code",
+    "refresh_token",
+  ]);
 });

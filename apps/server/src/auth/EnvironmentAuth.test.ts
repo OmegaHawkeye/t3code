@@ -1,18 +1,24 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PersistenceErrors from "../persistence/Errors.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as SessionLifetime from "./SessionLifetime.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -34,8 +40,14 @@ const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Servic
     }),
   ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-server-test-" })));
 
-const layerEnvironmentAuth = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
+const layerEnvironmentAuth = (
+  overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
+  sessionLifetime: Layer.Layer<SessionLifetime.SessionLifetime, never> = SessionLifetime.layerFixed(
+    Duration.days(90),
+  ),
+) =>
   EnvironmentAuth.layer.pipe(
+    Layer.provide(sessionLifetime),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
@@ -75,6 +87,40 @@ const requestMetadata = {
 };
 
 it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
+  it.effect("does not shorten an existing MCP grant when the idle period is reduced", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const authSessions = yield* AuthSessions.AuthSessionRepository;
+      const issued = yield* sessions.issue({
+        subject: "mcp-client",
+        method: "bearer-access-token",
+        scopes: ["orchestration:read"],
+        ttl: Duration.hours(1),
+        sessionTtl: Duration.days(90),
+        renewable: false,
+        kind: "oauth-grant",
+      });
+      const before = yield* authSessions.getById({ sessionId: issued.sessionId });
+      expect(Option.isSome(before)).toBe(true);
+      if (Option.isNone(before)) return;
+
+      const renewed = yield* serverAuth.renewMcpClientSession(issued.sessionId);
+      const after = yield* authSessions.getById({ sessionId: issued.sessionId });
+      expect(renewed.grantExpiresAt.epochMilliseconds).toBe(
+        before.value.expiresAt.epochMilliseconds,
+      );
+      expect(Option.isSome(after)).toBe(true);
+      if (Option.isSome(after)) {
+        expect(after.value.expiresAt.epochMilliseconds).toBe(
+          before.value.expiresAt.epochMilliseconds,
+        );
+      }
+    }).pipe(
+      Effect.provide(layerEnvironmentAuth(undefined, SessionLifetime.layerFixed(Duration.days(1)))),
+    ),
+  );
+
   it.effect("uses the reusable dev cookie without overriding a normal scoped cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -699,5 +745,115 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       } as never);
       expect(verified.sessionId).toBe(bearer.sessionId);
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+  );
+  it.effect("issues renewable sessions to paired browser, bearer and DPoP clients", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const repository = yield* AuthSessions.AuthSessionRepository;
+      const renewableOf = (token: string) =>
+        sessions.verify(token).pipe(
+          Effect.flatMap((verified) => repository.getById({ sessionId: verified.sessionId })),
+          Effect.map((row) => Option.getOrThrow(row).renewable),
+        );
+
+      const browser = yield* serverAuth.createBrowserSession(
+        (yield* serverAuth.issuePairingCredential()).credential,
+        requestMetadata,
+      );
+      const bearer = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        (yield* serverAuth.issuePairingCredential()).credential,
+        undefined,
+        requestMetadata,
+      );
+      const dpop = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        (yield* serverAuth.issuePairingCredential()).credential,
+        undefined,
+        requestMetadata,
+        { proofKeyThumbprint: "test-proof-key" },
+      );
+      const cli = yield* serverAuth.issueSession();
+
+      expect(yield* renewableOf(browser.sessionToken)).toBe(true);
+      expect(yield* renewableOf(bearer.access_token)).toBe(true);
+      expect(yield* renewableOf(dpop.access_token)).toBe(true);
+      expect(yield* renewableOf(cli.token)).toBe(false);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  const issueLongLived = Effect.gen(function* () {
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    return {
+      serverAuth,
+      issued: yield* serverAuth.issueLongLivedToken({
+        label: "CI",
+        access: "auto-accept-edits",
+        client: requestMetadata,
+      }),
+    };
+  });
+
+  it.effect("issues a 360-day long-lived token that /mcp accepts within its ceiling", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      const now = yield* DateTime.now;
+      expect(DateTime.toEpochMillis(issued.expiresAt) - DateTime.toEpochMillis(now)).toBe(
+        Duration.toMillis(Duration.days(360)),
+      );
+      const mcp = yield* serverAuth.authenticateMcpClient(makeBearerRequest(issued.token));
+      expect(mcp).toMatchObject({ sessionId: issued.sessionId, label: "CI" });
+      expect(mcp.access).toBe("auto-accept-edits");
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("rejects a long-lived token after 360 days even if used recently", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      yield* TestClock.adjust(Duration.days(359));
+      yield* serverAuth.authenticateMcpClient(makeBearerRequest(issued.token));
+      yield* TestClock.adjust(Duration.days(2));
+      const exit = yield* Effect.exit(
+        serverAuth.authenticateMcpClient(makeBearerRequest(issued.token)),
+      );
+      expect(exit._tag).toBe("Failure");
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("lists long-lived tokens as kind long-lived-token", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      const entry = (yield* serverAuth.listClientSessions(issued.sessionId)).find(
+        (candidate) => candidate.sessionId === issued.sessionId,
+      );
+      expect(entry).toMatchObject({ kind: "long-lived-token", renewable: false });
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("lists a long-lived token with its exact access level", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      const other = yield* serverAuth.issueSession();
+      const sessions = yield* serverAuth.listClientSessions(other.sessionId);
+      expect(sessions.find((entry) => entry.sessionId === issued.sessionId)?.access).toBe(
+        "auto-accept-edits",
+      );
+      expect(sessions.find((entry) => entry.sessionId === other.sessionId)?.access).toBeNull();
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
+  it.effect("keeps long-lived tokens when revoking other client sessions", () =>
+    Effect.gen(function* () {
+      const { serverAuth, issued } = yield* issueLongLived;
+      const current = yield* serverAuth.issueSession();
+      const other = yield* serverAuth.issueSession();
+      const revoked = yield* serverAuth.revokeOtherClientSessions(current.sessionId);
+      expect(revoked).toBe(1);
+      const remaining = (yield* serverAuth.listClientSessions(current.sessionId)).map(
+        (entry) => entry.sessionId,
+      );
+      expect(remaining).toContain(issued.sessionId);
+      expect(remaining).toContain(current.sessionId);
+      expect(remaining).not.toContain(other.sessionId);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 });

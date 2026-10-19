@@ -9,14 +9,17 @@ import {
 } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpServerRequest } from "effect/http";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
@@ -28,6 +31,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as SessionLifetime from "./SessionLifetime.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
 
@@ -48,6 +52,7 @@ const layerConfig = Layer.effect(
 ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-http-test-" })));
 
 const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
+  Layer.provide(SessionLifetime.layerFixed(Duration.days(90))),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerEnvironment.layerIdentity),
@@ -160,6 +165,230 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+type SessionCheck = {
+  readonly via?: "cookie" | "bearer";
+  readonly advance?: Duration.Duration;
+  readonly renewViaClients?: boolean;
+};
+
+const sessionCheck = (check: SessionCheck) =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const testClock = yield* Clock.Clock;
+    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    // The web handler runs on its own runtime; pass the test clock per request.
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+      Context.add(Clock.Clock, testClock),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const run = (request: Request) =>
+            Effect.promise(() => environment.handler(request, requestContext));
+          const devResponse = yield* run(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+          );
+          const devCookie = (
+            devResponse.headers.getSetCookie().find((c) => c.startsWith("t3_dev_session_")) ?? ""
+          ).split(";", 1)[0]!;
+          const pairCredential = () =>
+            run(postJson("/api/auth/pairing-token", {}, { cookie: devCookie })).pipe(
+              Effect.flatMap((response) =>
+                Effect.promise(() => response.json() as Promise<{ credential: string }>),
+              ),
+            );
+          const issued = yield* run(
+            postJson("/api/auth/browser-session", {
+              credential: (yield* pairCredential()).credential,
+            }),
+          );
+          const cookie = issued.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+          const bearerResponse = yield* run(
+            new Request("http://127.0.0.1/oauth/token", {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: AuthTokenExchangeGrantType,
+                subject_token: (yield* pairCredential()).credential,
+                subject_token_type: AuthEnvironmentBootstrapTokenType,
+                requested_token_type: AuthAccessTokenType,
+              }),
+            }),
+          );
+          const bearer = (
+            (yield* Effect.promise(() => bearerResponse.json())) as {
+              access_token: string;
+            }
+          ).access_token;
+          yield* TestClock.adjust(check.advance ?? Duration.hours(1));
+          if (check.renewViaClients) {
+            const renewed = yield* run(
+              new Request("http://127.0.0.1/api/auth/clients", { headers: { cookie } }),
+            );
+            expect(renewed.status).toBe(200);
+            expect(renewed.headers.getSetCookie()).toHaveLength(0);
+          }
+          const response = yield* run(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: check.via === "bearer" ? { authorization: `Bearer ${bearer}` } : { cookie },
+            }),
+          );
+          return { response, cookie, nowMs: yield* testClock.currentTimeMillis };
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(NodeServices.layer));
+
+const expectCookieExpiry = (response: Response, cookie: string, nowMs: number) => {
+  const setCookie = response.headers.getSetCookie();
+  expect(setCookie).toHaveLength(1);
+  expect(setCookie[0]).toContain(`${cookie};`);
+  expect(setCookie[0]).toContain("HttpOnly");
+  const expires = /Expires=([^;]+)/i.exec(setCookie[0]!)?.[1];
+  expect(
+    Math.abs(Date.parse(expires!) - (nowMs + Duration.toMillis(Duration.days(90)))),
+  ).toBeLessThanOrEqual(1000);
+};
+
+it.effect("re-sends the session cookie with the renewed expiry", () =>
+  Effect.gen(function* () {
+    const { response, cookie, nowMs } = yield* sessionCheck({ advance: Duration.days(2) });
+    expect(response.status).toBe(200);
+    expectCookieExpiry(response, cookie, nowMs);
+  }),
+);
+
+it.effect("re-sends the cookie when another request already renewed the row", () =>
+  Effect.gen(function* () {
+    const { response, cookie, nowMs } = yield* sessionCheck({
+      advance: Duration.days(2),
+      renewViaClients: true,
+    });
+    expect(response.status).toBe(200);
+    expectCookieExpiry(response, cookie, nowMs);
+  }),
+);
+
+it.effect("re-sends the current expiry for a renewable cookie session without renewal", () =>
+  Effect.gen(function* () {
+    const { response, cookie, nowMs } = yield* sessionCheck({ advance: Duration.hours(1) });
+    expect(response.status).toBe(200);
+    const setCookie = response.headers.getSetCookie();
+    expect(setCookie).toHaveLength(1);
+    expect(setCookie[0]).toContain(`${cookie};`);
+    const expires = /Expires=([^;]+)/i.exec(setCookie[0]!)?.[1];
+    // Issued at t=0 with a 90-day idle period; one hour later it is not renewed.
+    expect(
+      Math.abs(Date.parse(expires!) - Duration.toMillis(Duration.days(90))),
+    ).toBeLessThanOrEqual(1000);
+    expect(nowMs).toBe(Duration.toMillis(Duration.hours(1)));
+  }),
+);
+
+it.effect("does not set a cookie for a bearer credential", () =>
+  Effect.gen(function* () {
+    const { response } = yield* sessionCheck({ via: "bearer", advance: Duration.days(2) });
+    expect(response.status).toBe(200);
+    expect(yield* Effect.promise(() => response.json())).toMatchObject({ authenticated: true });
+    expect(response.headers.getSetCookie()).toHaveLength(0);
+  }),
+);
+
+const longLivedTokenRequest = (cookie: string, access: string) =>
+  postJson("/api/auth/long-lived-tokens", { label: "CI", access }, { cookie });
+
+const withDevAndRestrictedCookies = <A, E>(
+  use: (input: {
+    readonly run: (request: Request) => Effect.Effect<Response>;
+    readonly devCookie: string;
+    readonly restrictedCookie: string;
+  }) => Effect.Effect<A, E>,
+) =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const run = (request: Request) =>
+            Effect.promise(() => environment.handler(request, requestContext));
+          const devResponse = yield* run(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+          );
+          const devCookie = (
+            devResponse.headers.getSetCookie().find((c) => c.startsWith("t3_dev_session_")) ?? ""
+          ).split(";", 1)[0]!;
+          const pairing = (yield* run(
+            postJson(
+              "/api/auth/pairing-token",
+              { scopes: ["access:write", "orchestration:read"] },
+              { cookie: devCookie },
+            ),
+          ).pipe(
+            Effect.flatMap((response) =>
+              Effect.promise(() => response.json() as Promise<{ credential: string }>),
+            ),
+          )) as { credential: string };
+          const restricted = yield* run(
+            postJson("/api/auth/browser-session", { credential: pairing.credential }),
+          );
+          const restrictedCookie = restricted.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+          return yield* use({ run, devCookie, restrictedCookie });
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(NodeServices.layer));
+
+it.effect("creates a long-lived token for a caller with access:write", () =>
+  withDevAndRestrictedCookies(({ run, devCookie }) =>
+    Effect.gen(function* () {
+      const response = yield* run(longLivedTokenRequest(devCookie, "full-access"));
+      expect(response.status).toBe(200);
+      const body = (yield* Effect.promise(() => response.json())) as {
+        token: string;
+        sessionId: string;
+        expiresAt: string;
+      };
+      expect(body.token.length).toBeGreaterThan(20);
+      expect(body.sessionId).toBeTruthy();
+      expect(Date.parse(body.expiresAt)).toBeGreaterThan(
+        (yield* Clock.currentTimeMillis) + 359 * 86_400_000,
+      );
+    }),
+  ),
+);
+
+it.effect("refuses a long-lived token wider than the caller's scopes", () =>
+  withDevAndRestrictedCookies(({ run, restrictedCookie }) =>
+    Effect.gen(function* () {
+      const response = yield* run(longLivedTokenRequest(restrictedCookie, "full-access"));
+      expect(response.status).toBe(403);
+      expect(yield* Effect.promise(() => response.json())).toMatchObject({
+        requiredScope: "orchestration:operate",
+      });
+      const narrow = yield* run(longLivedTokenRequest(restrictedCookie, "read-only"));
+      expect(narrow.status).toBe(200);
+    }),
+  ),
 );
 
 it.effect("exports only verified T3 Connect requests", () =>
