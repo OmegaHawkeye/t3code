@@ -35,6 +35,7 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as SettingsLinearAutopilotLinearRouteImport } from './routes/settings.linear-autopilot.linear'
 import { Route as SettingsLinearAutopilotApprovalsRouteImport } from './routes/settings.linear-autopilot.approvals'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -169,6 +170,12 @@ const ChatNewRoute = ChatNewRouteImport.update({
   path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
+const SettingsLinearAutopilotLinearRoute =
+  SettingsLinearAutopilotLinearRouteImport.update({
+    id: '/linear',
+    path: '/linear',
+    getParentRoute: () => SettingsLinearAutopilotRoute,
+  } as any)
 const SettingsLinearAutopilotApprovalsRoute =
   SettingsLinearAutopilotApprovalsRouteImport.update({
     id: '/approvals',
@@ -216,6 +223,7 @@ export interface FileRoutesByFullPath {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/linear-autopilot/approvals': typeof SettingsLinearAutopilotApprovalsRoute
+  '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -246,6 +254,7 @@ export interface FileRoutesByTo {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/linear-autopilot/approvals': typeof SettingsLinearAutopilotApprovalsRoute
+  '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -278,6 +287,7 @@ export interface FileRoutesById {
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/linear-autopilot/approvals': typeof SettingsLinearAutopilotApprovalsRoute
+  '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -310,6 +320,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/linear-autopilot/approvals'
+    | '/settings/linear-autopilot/linear'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -340,6 +351,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/linear-autopilot/approvals'
+    | '/settings/linear-autopilot/linear'
   id:
     | '__root__'
     | '/_chat'
@@ -371,6 +383,7 @@ export interface FileRouteTypes {
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/settings/linear-autopilot/approvals'
+    | '/settings/linear-autopilot/linear'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -568,6 +581,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/settings/linear-autopilot/linear': {
+      id: '/settings/linear-autopilot/linear'
+      path: '/linear'
+      fullPath: '/settings/linear-autopilot/linear'
+      preLoaderRoute: typeof SettingsLinearAutopilotLinearRouteImport
+      parentRoute: typeof SettingsLinearAutopilotRoute
+    }
     '/settings/linear-autopilot/approvals': {
       id: '/settings/linear-autopilot/approvals'
       path: '/approvals'
@@ -612,12 +632,14 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsLinearAutopilotRouteChildren {
   SettingsLinearAutopilotApprovalsRoute: typeof SettingsLinearAutopilotApprovalsRoute
+  SettingsLinearAutopilotLinearRoute: typeof SettingsLinearAutopilotLinearRoute
 }
 
 const SettingsLinearAutopilotRouteChildren: SettingsLinearAutopilotRouteChildren =
   {
     SettingsLinearAutopilotApprovalsRoute:
       SettingsLinearAutopilotApprovalsRoute,
+    SettingsLinearAutopilotLinearRoute: SettingsLinearAutopilotLinearRoute,
   }
 
 const SettingsLinearAutopilotRouteWithChildren =

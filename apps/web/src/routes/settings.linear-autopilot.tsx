@@ -1,6 +1,6 @@
 import { Outlet, createFileRoute, useLocation } from "@tanstack/react-router";
 
-import { LinearAutopilotSettingsPanel } from "../components/settings/LinearAutopilotSettings";
+import { AutopilotIntegrationsPanel } from "../components/settings/AutopilotIntegrations";
 
 export const Route = createFileRoute("/settings/linear-autopilot")({
   component: LinearAutopilotRoute,
@@ -8,5 +8,5 @@ export const Route = createFileRoute("/settings/linear-autopilot")({
 
 function LinearAutopilotRoute() {
   const pathname = useLocation({ select: (location) => location.pathname });
-  return pathname === "/settings/linear-autopilot" ? <LinearAutopilotSettingsPanel /> : <Outlet />;
+  return pathname === "/settings/linear-autopilot" ? <AutopilotIntegrationsPanel /> : <Outlet />;
 }

@@ -18,10 +18,10 @@ import {
   PanelsTopLeftIcon,
   KeyboardIcon,
   Link2Icon,
-  ListTodoIcon,
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
+  WorkflowIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -84,7 +84,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/integrations": BlocksIcon,
-  "/settings/linear-autopilot": ListTodoIcon,
+  "/settings/linear-autopilot": WorkflowIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/storage": HardDriveIcon,
