@@ -14,9 +14,7 @@ import * as LinearAutopilotOAuth from "./LinearAutopilotOAuth.ts";
 const bytes = (value: string) => new TextEncoder().encode(value);
 
 it.effect("connects a workspace with PKCE, rotates its token, and disconnects", () => {
-  const secrets = new Map<string, Uint8Array>([
-    ["linear-autopilot-client-id", bytes("linear-client-id")],
-  ]);
+  const secrets = new Map<string, Uint8Array>();
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokenRequest = 0;
   const httpClient = HttpClient.make((request) => {
@@ -75,6 +73,7 @@ it.effect("connects a workspace with PKCE, rotates its token, and disconnects", 
     const started = yield* oauth.start({
       callbackOrigin: "http://localhost:6200",
       returnOrigin: "http://localhost:5173",
+      clientId: "linear-client-id",
     });
     const authorization = new URL(started.authorizationUrl);
     const state = authorization.searchParams.get("state");
@@ -95,6 +94,10 @@ it.effect("connects a workspace with PKCE, rotates its token, and disconnects", 
       "http://localhost:5173/settings/linear-autopilot/linear",
     );
     assert.isTrue(secrets.has("linear-autopilot-oauth-token"));
+    assert.strictEqual(
+      new TextDecoder().decode(secrets.get("linear-autopilot-client-id")),
+      "linear-client-id",
+    );
     assert.isTrue(yield* oauth.isConnected);
     assert.strictEqual(yield* oauth.accessToken(), "access-2");
     assert.strictEqual(tokenRequest, 2);

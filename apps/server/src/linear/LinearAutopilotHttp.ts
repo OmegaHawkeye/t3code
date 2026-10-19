@@ -35,8 +35,23 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.linearAutopilot.oauthStatus")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* oauth.isConnected.pipe(
-            Effect.map((connected) => ({ connected })),
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const callbackOrigin = Option.match(HttpServerRequest.toURL(request), {
+            onNone: () => null,
+            onSome: (url) => url.origin,
+          });
+          if (!callbackOrigin) {
+            return yield* failEnvironmentInternal("internal_error", "Request URL unavailable");
+          }
+          return yield* Effect.all([oauth.isConnected, oauth.isClientIdConfigured]).pipe(
+            Effect.map(([connected, clientIdConfigured]) => ({
+              connected,
+              clientIdConfigured,
+              redirectUri: new URL(
+                "/api/linear-autopilot/oauth/callback",
+                callbackOrigin,
+              ).toString(),
+            })),
             Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
           );
         }),
@@ -55,7 +70,7 @@ export const layer = HttpApiBuilder.group(
             return yield* failEnvironmentInternal("internal_error", "Request URL unavailable");
           }
           return yield* oauth
-            .start({ callbackOrigin, returnOrigin: args.headers.origin })
+            .start({ callbackOrigin, returnOrigin: args.headers.origin, ...args.payload })
             .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
         }),
       )

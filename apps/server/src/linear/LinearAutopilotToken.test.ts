@@ -18,6 +18,7 @@ const tokenLayer = (
           start: () => Effect.die("unused"),
           callback: () => Effect.die("unused"),
           isConnected: Effect.succeed(true),
+          isClientIdConfigured: Effect.succeed(true),
           disconnect: Effect.void,
           accessToken: () => accessToken,
         }),

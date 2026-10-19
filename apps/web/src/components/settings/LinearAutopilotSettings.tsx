@@ -11,7 +11,6 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Link } from "@tanstack/react-router";
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
-import { resolvePrimaryEnvironmentHttpUrl } from "../../environments/primary/target";
 import { runPrimaryHttp } from "../../lib/runtime";
 import {
   useScopedSettings,
@@ -21,24 +20,18 @@ import {
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const REDACTED_SECRET = "••••••";
-const linearOAuthRedirectUri = () =>
-  new URL("/api/linear-autopilot/oauth/callback", resolvePrimaryEnvironmentHttpUrl("/")).toString();
-const linearOAuthAppConfigurationUrl = () => {
+const linearOAuthAppConfigurationUrl = (redirectUri: string) => {
   const url = new URL("https://linear.app/settings/api/applications/new");
   url.searchParams.set("distribution", "private");
   url.searchParams.set("developer.name", "Omega Hawkeye");
   url.searchParams.set("oauth.client_name", "T3 Code Autopilot");
   url.searchParams.set("oauth.client_uri", "https://github.com/OmegaHawkeye/t3code");
-  url.searchParams.set("oauth.redirect_uris", linearOAuthRedirectUri());
+  url.searchParams.set("oauth.redirect_uris", redirectUri);
   url.searchParams.set("oauth.grant_types", "authorization_code");
   return url.toString();
 };
 
-async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
-  if (!credentialsConfigured) {
-    return { connected: false, catalog: null, projects: [], error: null };
-  }
-
+async function fetchAutopilotCatalog() {
   try {
     const status = await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
@@ -46,7 +39,14 @@ async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
       ),
     );
     if (!status.connected) {
-      return { connected: false, catalog: null, projects: [], error: null };
+      return {
+        connected: false,
+        catalog: null,
+        projects: [],
+        error: null,
+        redirectUri: status.redirectUri,
+        clientIdConfigured: status.clientIdConfigured,
+      };
     }
     const catalog = await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
@@ -64,6 +64,8 @@ async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
         catalog,
         projects: projectSnapshot.projects.filter((project) => project.deletedAt === null),
         error: null,
+        redirectUri: status.redirectUri,
+        clientIdConfigured: status.clientIdConfigured,
       };
     } catch {
       return {
@@ -71,6 +73,8 @@ async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
         catalog,
         projects: [],
         error: "Linear is connected, but T3 project options could not be loaded.",
+        redirectUri: status.redirectUri,
+        clientIdConfigured: status.clientIdConfigured,
       };
     }
   } catch {
@@ -108,6 +112,8 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [linearConnected, setLinearConnected] = useState(false);
   const [projects, setProjects] = useState<ProjectSnapshot["projects"]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [redirectUri, setRedirectUri] = useState<string | null>(null);
+  const [serverClientIdConfigured, setServerClientIdConfigured] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
   const [oauthNotice, setOauthNotice] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -117,31 +123,36 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     if (result === "failed") return "Linear authorization failed. Please try again.";
     return null;
   });
-  const clientIdConfigured = settings.clientId === REDACTED_SECRET;
-  const [loadingCatalog, setLoadingCatalog] = useState(clientIdConfigured);
+  const savedClientIdConfigured = settings.clientId === REDACTED_SECRET;
+  const clientIdConfigured = savedClientIdConfigured || serverClientIdConfigured;
+  const [loadingCatalog, setLoadingCatalog] = useState(savedClientIdConfigured);
 
   const reloadCatalog = () => {
     setCatalog(null);
     setProjects([]);
     setCatalogError(null);
     setLoadingCatalog(true);
-    void fetchAutopilotCatalog(clientIdConfigured).then((result) => {
+    void fetchAutopilotCatalog().then((result) => {
       setCatalog(result.catalog);
       setLinearConnected(result.connected);
       setProjects(result.projects);
       setCatalogError(result.error);
+      if (result.redirectUri) setRedirectUri(result.redirectUri);
+      setServerClientIdConfigured(result.clientIdConfigured ?? false);
       setLoadingCatalog(false);
     });
   };
 
   useEffect(() => {
     let cancelled = false;
-    void fetchAutopilotCatalog(clientIdConfigured).then((result) => {
+    void fetchAutopilotCatalog().then((result) => {
       if (cancelled) return;
       setCatalog(result.catalog);
       setLinearConnected(result.connected);
       setProjects(result.projects);
       setCatalogError(result.error);
+      if (result.redirectUri) setRedirectUri(result.redirectUri);
+      setServerClientIdConfigured(result.clientIdConfigured ?? false);
       setLoadingCatalog(false);
     });
     return () => {
@@ -150,8 +161,9 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   }, [clientIdConfigured]);
 
   const connectLinear = async () => {
-    if (!clientIdConfigured) {
-      setCatalogError("Save the Linear OAuth app Client ID above before signing in.");
+    const unsavedClientId = clientId.trim();
+    if (!clientIdConfigured && !unsavedClientId) {
+      setCatalogError("Enter the Linear OAuth app Client ID above before signing in.");
       return;
     }
     setOauthBusy(true);
@@ -162,6 +174,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           Effect.flatMap((client) =>
             client.linearAutopilot.oauthStart({
               headers: { origin: window.location.origin },
+              payload: unsavedClientId ? { clientId: unsavedClientId } : {},
             }),
           ),
         ),
@@ -222,7 +235,10 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           projectMappings,
           clientId: clearClientId
             ? ""
-            : clientId || (settings.clientId === REDACTED_SECRET ? REDACTED_SECRET : ""),
+            : clientId ||
+              (settings.clientId === REDACTED_SECRET || serverClientIdConfigured
+                ? REDACTED_SECRET
+                : ""),
           clientSecret: settings.clientSecret,
         },
       });
@@ -248,7 +264,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           description={
             settings.clientId === REDACTED_SECRET
               ? "OAuth app identifier stored on this server. Leave blank to keep it."
-              : "Required once for this server. Create a Linear OAuth app with the prefilled settings link."
+              : "Enter the Client ID from your Linear OAuth app. It is saved automatically after authorization."
           }
           control={
             <div className="flex w-full flex-col gap-2 @min-[32rem]/settings-row:w-72">
@@ -267,7 +283,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={!writeAllowed || settings.clientId !== REDACTED_SECRET}
+                  disabled={!writeAllowed || !clientIdConfigured}
                   onClick={() => {
                     setClearClientId(true);
                     setClientId("");
@@ -277,12 +293,15 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                 </Button>
               </div>
               <a
-                className="text-sm text-primary underline underline-offset-4"
-                href={linearOAuthAppConfigurationUrl()}
+                className={`text-sm text-primary underline underline-offset-4 ${
+                  redirectUri ? "" : "pointer-events-none opacity-50"
+                }`}
+                href={redirectUri ? linearOAuthAppConfigurationUrl(redirectUri) : undefined}
+                aria-disabled={!redirectUri}
                 target="_blank"
                 rel="noreferrer"
               >
-                Open prefilled Linear OAuth app setup
+                {redirectUri ? "Open prefilled Linear OAuth app setup" : "Loading callback URL…"}
               </a>
             </div>
           }
@@ -314,7 +333,8 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
             <Input
               aria-label="Linear OAuth callback URL"
               readOnly
-              value={linearOAuthRedirectUri()}
+              value={redirectUri ?? ""}
+              placeholder="Loading callback URL…"
               className="w-full @min-[32rem]/settings-row:w-96"
             />
           }

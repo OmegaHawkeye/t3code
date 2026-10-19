@@ -702,6 +702,11 @@ class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopil
   .add(
     HttpApiEndpoint.post("oauthStart", "/api/linear-autopilot/oauth/start", {
       headers: LinearOAuthStartHeaders,
+      payload: Schema.Struct({
+        clientId: Schema.optionalKey(
+          Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)),
+        ),
+      }),
       success: LinearAutopilotOAuthStartResult,
       error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),

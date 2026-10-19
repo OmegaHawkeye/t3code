@@ -77,6 +77,7 @@ export class LinearAutopilotOAuth extends Context.Service<
     readonly start: (input: {
       readonly callbackOrigin: string;
       readonly returnOrigin: string;
+      readonly clientId?: string;
     }) => Effect.Effect<
       { readonly authorizationUrl: string; readonly redirectUri: string },
       LinearAutopilotOAuthError
@@ -90,6 +91,7 @@ export class LinearAutopilotOAuth extends Context.Service<
       LinearAutopilotOAuthError
     >;
     readonly isConnected: Effect.Effect<boolean, LinearAutopilotOAuthError>;
+    readonly isClientIdConfigured: Effect.Effect<boolean, LinearAutopilotOAuthError>;
     readonly disconnect: Effect.Effect<void, LinearAutopilotOAuthError>;
     readonly accessToken: (options?: {
       readonly forceRefresh?: boolean;
@@ -118,6 +120,12 @@ const make = Effect.gen(function* () {
         ? Effect.succeed(values)
         : Effect.fail(new LinearAutopilotOAuthError({ reason: "credentials-incomplete" }));
     }),
+  );
+  const isClientIdConfigured = secretStore.get(CLIENT_ID_SECRET).pipe(
+    Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })),
+    Effect.map(
+      (value) => Option.isSome(value) && new TextDecoder().decode(value.value).trim().length > 0,
+    ),
   );
 
   const readStoredToken = secretStore.get(TOKEN_SECRET).pipe(
@@ -159,9 +167,13 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const saveClientId = (clientId: string) =>
+    secretStore
+      .set(CLIENT_ID_SECRET, new TextEncoder().encode(clientId))
+      .pipe(Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })));
+
   const exchangeCode = (input: { readonly code: string; readonly flow: PendingFlow }) =>
     Effect.gen(function* () {
-      yield* readCredentials;
       const response = yield* requestToken(
         HttpClientRequest.post(TOKEN_URL).pipe(
           HttpClientRequest.bodyUrlParams({
@@ -173,11 +185,13 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+      yield* saveClientId(input.flow.clientId);
       yield* saveToken(response);
     });
 
-  const start: LinearAutopilotOAuth["Service"]["start"] = ({ callbackOrigin, returnOrigin }) =>
+  const start: LinearAutopilotOAuth["Service"]["start"] = (input) =>
     Effect.gen(function* () {
+      const { callbackOrigin, returnOrigin } = input;
       const parseOrigin = (origin: string) =>
         Effect.try({
           try: () => {
@@ -200,7 +214,11 @@ const make = Effect.gen(function* () {
         [parseOrigin(callbackOrigin), parseOrigin(returnOrigin)],
         { concurrency: 2 },
       );
-      const credentials = yield* readCredentials;
+      const clientId =
+        input.clientId === undefined ? (yield* readCredentials).clientId : input.clientId.trim();
+      if (!clientId || clientId.length > 512) {
+        return yield* new LinearAutopilotOAuthError({ reason: "credentials-incomplete" });
+      }
       const [stateBytes, verifierBytes] = yield* Effect.all(
         [crypto.randomBytes(32), crypto.randomBytes(32)],
         { concurrency: 2 },
@@ -215,7 +233,7 @@ const make = Effect.gen(function* () {
       const returnUrl = new URL(RETURN_PATH, parsedReturnOrigin).toString();
       const now = clock.currentTimeMillisUnsafe();
       const flow: PendingFlow = {
-        clientId: credentials.clientId,
+        clientId,
         verifier,
         redirectUri,
         returnUrl,
@@ -231,7 +249,7 @@ const make = Effect.gen(function* () {
       const authorization = new URL(AUTHORIZE_URL);
       authorization.search = new URLSearchParams({
         actor: "app",
-        client_id: credentials.clientId,
+        client_id: clientId,
         code_challenge: challenge,
         code_challenge_method: "S256",
         redirect_uri: redirectUri,
@@ -327,6 +345,7 @@ const make = Effect.gen(function* () {
     start,
     callback,
     isConnected: readStoredToken.pipe(Effect.map(Option.isSome)),
+    isClientIdConfigured,
     disconnect,
     accessToken,
   });
