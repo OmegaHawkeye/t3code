@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,40 +13,43 @@ import * as SqlitePersistence from "./Sqlite.ts";
 const layer = it.layer(
   Layer.mergeAll(LinearAutopilotIntake.layer, LinearAutopilotRuns.layer).pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provideMerge(NodeServices.layer),
   ),
 );
 
 const now = DateTime.makeUnsafe("2026-10-19T10:00:00.000Z");
 
-const runInput = {
+const runInput = (issueId: string) => ({
   workspaceId: "workspace-1",
-  issueId: "issue-1",
+  issueId,
   sourceUpdatedAt: now,
   snapshotHash: "a".repeat(64),
   createdAt: now,
-};
-
-const seedIssue = Effect.gen(function* () {
-  const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
-  yield* intake.ingest({
-    eventId: null,
-    workspaceId: runInput.workspaceId,
-    issueId: runInput.issueId,
-    identifier: "OME-223",
-    title: "Linear intake",
-    url: "https://linear.app/example/issue/OME-223",
-    sourceUpdatedAt: DateTime.formatIso(now),
-    observedAt: DateTime.formatIso(now),
-  });
 });
+
+const seedIssue = (issueId: string) =>
+  Effect.gen(function* () {
+    const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+    yield* intake.ingest({
+      eventId: null,
+      workspaceId: "workspace-1",
+      issueId,
+      identifier: "OME-223",
+      title: "Linear intake",
+      url: "https://linear.app/example/issue/OME-223",
+      sourceUpdatedAt: DateTime.formatIso(now),
+      observedAt: DateTime.formatIso(now),
+    });
+  });
 
 layer("LinearAutopilotRunRepository", (it) => {
   it.effect("returns the active generation and permits only valid revisioned transitions", () =>
     Effect.gen(function* () {
-      yield* seedIssue;
+      const input = runInput("issue-transitions");
+      yield* seedIssue(input.issueId);
       const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
-      const first = yield* runs.createOrGetActive(runInput);
-      const duplicate = yield* runs.createOrGetActive(runInput);
+      const first = yield* runs.createOrGetActive(input);
+      const duplicate = yield* runs.createOrGetActive(input);
 
       assert.isTrue(first.created);
       assert.isFalse(duplicate.created);
@@ -81,9 +85,10 @@ layer("LinearAutopilotRunRepository", (it) => {
 
   it.effect("does not create a new generation after a terminal run without explicit retry", () =>
     Effect.gen(function* () {
-      yield* seedIssue;
+      const input = runInput("issue-terminal");
+      yield* seedIssue(input.issueId);
       const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
-      const first = yield* runs.createOrGetActive(runInput);
+      const first = yield* runs.createOrGetActive(input);
       assert.isTrue(
         yield* runs.transition({
           runId: first.run.runId,
@@ -92,19 +97,23 @@ layer("LinearAutopilotRunRepository", (it) => {
           updatedAt: now,
         }),
       );
-      const second = yield* runs.createOrGetActive(runInput);
+      const second = yield* runs.createOrGetActive(input);
       assert.isFalse(second.created);
       assert.equal(second.run.generation, 1);
       assert.equal(second.run.runId, first.run.runId);
-      assert.deepStrictEqual(yield* runs.listRecoverable(10), []);
+      assert.deepStrictEqual(
+        (yield* runs.listRecoverable(10)).filter(({ issueId }) => issueId === input.issueId),
+        [],
+      );
     }),
   );
 
   it.effect("binds approval to the requested plan and clears it before replanning", () =>
     Effect.gen(function* () {
-      yield* seedIssue;
+      const input = runInput("issue-approval");
+      yield* seedIssue(input.issueId);
       const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
-      const { run } = yield* runs.createOrGetActive(runInput);
+      const { run } = yield* runs.createOrGetActive(input);
       const approvedProjectId = ProjectId.make("trusted-project-1");
 
       assert.isTrue(
@@ -188,7 +197,9 @@ layer("LinearAutopilotRunRepository", (it) => {
           approvalBaseRef: "feature",
         }),
       );
-      const [approved] = yield* runs.listRecoverable(10);
+      const approved = (yield* runs.listRecoverable(10)).find(
+        ({ issueId }) => issueId === input.issueId,
+      );
       assert.equal(approved?.approvalPlanHash, "plan-hash-1");
       assert.equal(approved?.approvalPolicyVersion, "policy-1");
       assert.equal(approved?.approvalProjectId, approvedProjectId);
@@ -221,7 +232,9 @@ layer("LinearAutopilotRunRepository", (it) => {
         }),
       );
 
-      const [replanned] = yield* runs.listRecoverable(10);
+      const replanned = (yield* runs.listRecoverable(10)).find(
+        ({ issueId }) => issueId === input.issueId,
+      );
       assert.equal(replanned?.approvalPlanHash, null);
       assert.equal(replanned?.approvalPolicyVersion, null);
       assert.equal(replanned?.approvalProjectId, null);

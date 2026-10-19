@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -62,7 +62,9 @@ const NewRun = Schema.Struct({
   snapshotHash: Schema.String,
   createdAt: Schema.DateTimeUtcFromString,
 });
-const RecoverableRunsRequest = Schema.Struct({ limit: Schema.Int.pipe(Schema.between(1, 100)) });
+const RecoverableRunsRequest = Schema.Struct({
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+});
 const TransitionRequest = Schema.Struct({
   runId: Schema.String,
   expectedRevision: Schema.Int,
@@ -73,20 +75,25 @@ const TransitionRequest = Schema.Struct({
   approvalPlanHash: Schema.optional(Schema.NullOr(Schema.String)),
   approvalPolicyVersion: Schema.optional(Schema.NullOr(Schema.String)),
   approvalProjectId: Schema.optional(Schema.NullOr(ProjectId)),
-  approvalBaseRef: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(255)))),
+  approvalBaseRef: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(255)))),
 });
 const ApprovalRequest = Schema.Struct({
   runId: Schema.String,
   expectedRevision: Schema.Int,
-  planHash: Schema.String.pipe(Schema.maxLength(128)),
-  policyVersion: Schema.String.pipe(Schema.maxLength(128)),
+  planHash: Schema.String.check(Schema.isMaxLength(128)),
+  policyVersion: Schema.String.check(Schema.isMaxLength(128)),
   projectId: ProjectId,
-  baseRef: Schema.String.pipe(Schema.maxLength(255)),
-  approvedBy: Schema.String.pipe(Schema.maxLength(128)),
+  baseRef: Schema.String.check(Schema.isMaxLength(255)),
+  approvedBy: Schema.String.check(Schema.isMaxLength(128)),
   approvedAt: Schema.DateTimeUtcFromString,
 });
+const RunIdCodec = Schema.fromJsonString(
+  Schema.toCodecJson(Schema.Tuple([Schema.String, Schema.String, Schema.Int])),
+);
 
-const allowedTransitions: Readonly<Record<LinearAutopilotRunState, ReadonlyArray<LinearAutopilotRunState>>> = {
+const allowedTransitions: Readonly<
+  Record<LinearAutopilotRunState, ReadonlyArray<LinearAutopilotRunState>>
+> = {
   queued: ["planning", "paused", "cancelled"],
   planning: ["reviewing", "paused", "failed", "cancelled"],
   reviewing: ["needs_approval", "paused", "failed", "cancelled"],
@@ -114,25 +121,23 @@ export class LinearAutopilotRunRepository extends Context.Service<
       { readonly run: LinearAutopilotRun; readonly created: boolean },
       PersistenceSqlError
     >;
-    readonly listRecoverable: (limit: number) => Effect.Effect<
-      ReadonlyArray<LinearAutopilotRun>,
-      PersistenceSqlError
-    >;
+    readonly listRecoverable: (
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<LinearAutopilotRun>, PersistenceSqlError>;
     /** Returns false when the revision is stale or the transition is not allowed. */
-    readonly transition: (input: typeof TransitionRequest.Type) => Effect.Effect<
-      boolean,
-      PersistenceSqlError
-    >;
+    readonly transition: (
+      input: typeof TransitionRequest.Type,
+    ) => Effect.Effect<boolean, PersistenceSqlError>;
     /** Approval is accepted only for the exact plan and policy revision awaiting review. */
-    readonly approve: (input: typeof ApprovalRequest.Type) => Effect.Effect<
-      boolean,
-      PersistenceSqlError
-    >;
+    readonly approve: (
+      input: typeof ApprovalRequest.Type,
+    ) => Effect.Effect<boolean, PersistenceSqlError>;
   }
 >()("t3/persistence/LinearAutopilotRuns/LinearAutopilotRunRepository") {}
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const crypto = yield* Crypto.Crypto;
 
   const findActive = SqlSchema.findOneOption({
     Request: ActiveRunKey,
@@ -198,7 +203,15 @@ const make = Effect.gen(function* () {
   const insertRun = SqlSchema.findOne({
     Request: NewRun,
     Result: LinearAutopilotRun,
-    execute: ({ runId, workspaceId, issueId, generation, sourceUpdatedAt, snapshotHash, createdAt }) => sql`
+    execute: ({
+      runId,
+      workspaceId,
+      issueId,
+      generation,
+      sourceUpdatedAt,
+      snapshotHash,
+      createdAt,
+    }) => sql`
       INSERT INTO linear_autopilot_runs (
         run_id, workspace_id, issue_id, generation, state,
         source_updated_at, snapshot_hash, created_at, updated_at
@@ -261,7 +274,18 @@ const make = Effect.gen(function* () {
   const updateRun = SqlSchema.findAll({
     Request: TransitionRequest,
     Result: Schema.Struct({ runId: Schema.String }),
-    execute: ({ runId, expectedRevision, nextState, updatedAt, threadId, worktreeId, approvalPlanHash, approvalPolicyVersion, approvalProjectId, approvalBaseRef }) => sql`
+    execute: ({
+      runId,
+      expectedRevision,
+      nextState,
+      updatedAt,
+      threadId,
+      worktreeId,
+      approvalPlanHash,
+      approvalPolicyVersion,
+      approvalProjectId,
+      approvalBaseRef,
+    }) => sql`
       UPDATE linear_autopilot_runs
       SET state = ${nextState},
           revision = revision + 1,
@@ -298,7 +322,16 @@ const make = Effect.gen(function* () {
   const approveRun = SqlSchema.findAll({
     Request: ApprovalRequest,
     Result: Schema.Struct({ runId: Schema.String }),
-    execute: ({ runId, expectedRevision, planHash, policyVersion, projectId, baseRef, approvedBy, approvedAt }) => sql`
+    execute: ({
+      runId,
+      expectedRevision,
+      planHash,
+      policyVersion,
+      projectId,
+      baseRef,
+      approvedBy,
+      approvedAt,
+    }) => sql`
       UPDATE linear_autopilot_runs
       SET state = 'approved',
           revision = revision + 1,
@@ -318,84 +351,85 @@ const make = Effect.gen(function* () {
 
   return LinearAutopilotRunRepository.of({
     createOrGetActive: (input) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          const current = yield* findActive({
-            workspaceId: input.workspaceId,
-            issueId: input.issueId,
-          }).pipe(
-            Effect.mapError(
-              toPersistenceSqlError("LinearAutopilotRuns.findActive:query"),
-            ),
-          );
-          if (Option.isSome(current)) return { run: current.value, created: false };
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const current = yield* findActive({
+              workspaceId: input.workspaceId,
+              issueId: input.issueId,
+            }).pipe(Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.findActive:query")));
+            if (Option.isSome(current)) return { run: current.value, created: false };
 
-          const latest = yield* findLatest({
-            workspaceId: input.workspaceId,
-            issueId: input.issueId,
-          }).pipe(
-            Effect.mapError(
-              toPersistenceSqlError("LinearAutopilotRuns.findLatest:query"),
-            ),
-          );
-          if (Option.isSome(latest)) return { run: latest.value, created: false };
+            const latest = yield* findLatest({
+              workspaceId: input.workspaceId,
+              issueId: input.issueId,
+            }).pipe(Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.findLatest:query")));
+            if (Option.isSome(latest)) return { run: latest.value, created: false };
 
-          const generation = 1;
-          const runId = createHash("sha256")
-            .update(JSON.stringify([input.workspaceId, input.issueId, generation]))
-            .digest("hex");
-          const run = yield* insertRun({ ...input, generation, runId }).pipe(
-            Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.insertRun:query")),
-          );
-          return { run, created: true };
-        }),
-      ).pipe(
-        Effect.catchTags({
-          SqlError: (cause) =>
-            Effect.fail(
-              toPersistenceSqlError("LinearAutopilotRuns.createOrGetActive:transaction")(cause),
-            ),
-        }),
-      ),
+            const generation = 1;
+            const runIdPayload = yield* Schema.encodeEffect(RunIdCodec)([
+              input.workspaceId,
+              input.issueId,
+              generation,
+            ]).pipe(Effect.orDie);
+            const runId = Hex.encode(
+              yield* crypto
+                .digest("SHA-256", new TextEncoder().encode(runIdPayload))
+                .pipe(Effect.orDie),
+            );
+            const run = yield* insertRun({ ...input, generation, runId }).pipe(
+              Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.insertRun:query")),
+            );
+            return { run, created: true };
+          }),
+        )
+        .pipe(
+          Effect.catchTags({
+            SqlError: (cause) =>
+              Effect.fail(
+                toPersistenceSqlError("LinearAutopilotRuns.createOrGetActive:transaction")(cause),
+              ),
+          }),
+        ),
     listRecoverable: (limit) =>
       listRecoverableRows({ limit }).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.listRecoverable:query")),
       ),
     transition: (input) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          const current = yield* sql<{
-            readonly state: LinearAutopilotRunState;
-          }>`SELECT state FROM linear_autopilot_runs WHERE run_id = ${input.runId} AND revision = ${input.expectedRevision}`.pipe(
-            Effect.mapError(
-              toPersistenceSqlError("LinearAutopilotRuns.readCurrent:query"),
-            ),
-          );
-          const state = current[0]?.state;
-          if (
-            state === undefined ||
-            input.nextState === "approved" ||
-            !allowedTransitions[state].includes(input.nextState) ||
-            (input.nextState === "needs_approval" &&
-              (!input.approvalPlanHash ||
-                !input.approvalPolicyVersion ||
-                !input.approvalProjectId ||
-                !input.approvalBaseRef))
-          )
-            return false;
-          const updated = yield* updateRun(input).pipe(
-            Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.update:query")),
-          );
-          return updated.length > 0;
-        }),
-      ).pipe(
-        Effect.catchTags({
-          SqlError: (cause) =>
-            Effect.fail(
-              toPersistenceSqlError("LinearAutopilotRuns.transition:transaction")(cause),
-            ),
-        }),
-      ),
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const current = yield* sql<{
+              readonly state: LinearAutopilotRunState;
+            }>`SELECT state FROM linear_autopilot_runs WHERE run_id = ${input.runId} AND revision = ${input.expectedRevision}`.pipe(
+              Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.readCurrent:query")),
+            );
+            const state = current[0]?.state;
+            if (
+              state === undefined ||
+              input.nextState === "approved" ||
+              !allowedTransitions[state].includes(input.nextState) ||
+              (input.nextState === "needs_approval" &&
+                (!input.approvalPlanHash ||
+                  !input.approvalPolicyVersion ||
+                  !input.approvalProjectId ||
+                  !input.approvalBaseRef))
+            )
+              return false;
+            const updated = yield* updateRun(input).pipe(
+              Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.update:query")),
+            );
+            return updated.length > 0;
+          }),
+        )
+        .pipe(
+          Effect.catchTags({
+            SqlError: (cause) =>
+              Effect.fail(
+                toPersistenceSqlError("LinearAutopilotRuns.transition:transaction")(cause),
+              ),
+          }),
+        ),
     approve: (input) =>
       approveRun(input).pipe(
         Effect.map((rows) => rows.length > 0),

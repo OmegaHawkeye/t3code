@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,7 +8,10 @@ import * as LinearAutopilotIntake from "./LinearAutopilotIntake.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
 const layer = it.layer(
-  LinearAutopilotIntake.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  LinearAutopilotIntake.layer.pipe(
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provideMerge(NodeServices.layer),
+  ),
 );
 
 const revision1 = "2026-10-18T12:00:00.000Z";
@@ -15,8 +19,8 @@ const revision2 = "2026-10-18T13:00:00.000Z";
 const observedAt = "2026-10-18T14:00:00.000Z";
 
 const candidate = (
-  sourceUpdatedAt: typeof revision1,
-  eventId = "event-1",
+  sourceUpdatedAt: string,
+  eventId: string = "event-1",
 ): typeof LinearAutopilotIntake.LinearAutopilotCandidate.Encoded => ({
   eventId,
   workspaceId: "workspace-1",
