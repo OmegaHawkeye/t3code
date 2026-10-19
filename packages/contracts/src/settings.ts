@@ -1046,7 +1046,7 @@ export const AuthIdlePeriodDays = Schema.Int.check(
 );
 
 export const LinearAutopilotSettings = Schema.Struct({
-  mode: Schema.Literals(["disabled", "shadow"]).pipe(
+  mode: Schema.Literals(["disabled", "shadow", "queue"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("disabled" as const)),
   ),
   teamId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),

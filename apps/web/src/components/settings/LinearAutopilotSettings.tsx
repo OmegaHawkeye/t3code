@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Link } from "@tanstack/react-router";
 import {
   useScopedSettings,
   useScopedSettingsWriteAllowed,
@@ -88,8 +89,16 @@ export function LinearAutopilotSettingsPanel() {
     <SettingsPageContainer className="gap-6">
       <SettingsSection title="Linear Autopilot">
         <SettingsRow
+          title="Pending plan approvals"
+          description="Review saved plans and their independent reviews on the dedicated approvals page."
+        >
+          <Button render={<Link to="/settings/linear-autopilot/approvals" />} variant="outline">
+            Open approvals
+          </Button>
+        </SettingsRow>
+        <SettingsRow
           title="Intake mode"
-          description="Disabled by default. Shadow mode evaluates eligible issues without creating runs."
+          description="Disabled by default. Shadow evaluates only; Queue stores eligible issue snapshots without launching agents."
         >
           <select
             aria-label="Intake mode"
@@ -100,6 +109,7 @@ export function LinearAutopilotSettingsPanel() {
           >
             <option value="disabled">Disabled</option>
             <option value="shadow">Shadow</option>
+            <option value="queue">Queue</option>
           </select>
         </SettingsRow>
         <SettingsRow

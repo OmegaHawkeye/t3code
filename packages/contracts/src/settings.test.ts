@@ -71,6 +71,9 @@ describe("Linear autopilot settings", () => {
     expect(decodeServerSettings({ linearAutopilot }).linearAutopilot).toEqual(linearAutopilot);
     expect(decodeServerSettingsPatch({ linearAutopilot })).toEqual({ linearAutopilot });
     expect(() => decodeServerSettingsPatch({ linearAutopilot: { mode: "dispatch" } })).toThrow();
+    expect(
+      decodeServerSettingsPatch({ linearAutopilot: { mode: "queue" } }).linearAutopilot?.mode,
+    ).toBe("queue");
   });
 });
 

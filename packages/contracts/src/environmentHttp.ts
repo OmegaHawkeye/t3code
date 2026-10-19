@@ -66,6 +66,11 @@ import {
   PullRequestUnavailableError,
 } from "./pullRequest.ts";
 import {
+  LinearAutopilotApproveRequest,
+  LinearAutopilotApproveResult,
+  LinearAutopilotPendingApprovals,
+} from "./linearAutopilot.ts";
+import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
   RelayEnvironmentConfigRequest,
@@ -676,6 +681,23 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopilot")
+  .add(
+    HttpApiEndpoint.get("listPendingApprovals", "/api/linear-autopilot/approvals", {
+      headers: OptionalBearerHeaders,
+      success: LinearAutopilotPendingApprovals,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("approve", "/api/linear-autopilot/approvals/approve", {
+      headers: OptionalBearerHeaders,
+      payload: LinearAutopilotApproveRequest,
+      success: LinearAutopilotApproveResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -767,6 +789,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMcpOAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentLinearAutopilotHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}
