@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type { LinearAutopilotCatalog } from "@t3tools/contracts";
 
 const LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql";
 const PAGE_SIZE = 50;
@@ -41,6 +42,42 @@ const GraphqlResponse = Schema.Struct({
     Schema.NullOr(
       Schema.Struct({
         issues: Schema.optional(IssuePage),
+        teams: Schema.optional(
+          Schema.Struct({
+            nodes: Schema.Array(
+              Schema.Struct({
+                id: Schema.String.check(Schema.isMaxLength(128)),
+                name: Schema.String.check(Schema.isMaxLength(256)),
+                key: Schema.String.check(Schema.isMaxLength(64)),
+                states: Schema.Struct({
+                  nodes: Schema.Array(
+                    Schema.Struct({
+                      id: Schema.String.check(Schema.isMaxLength(128)),
+                      name: Schema.String.check(Schema.isMaxLength(256)),
+                      type: Schema.String.check(Schema.isMaxLength(32)),
+                    }),
+                  ).check(Schema.isMaxLength(100)),
+                }),
+                labels: Schema.Struct({
+                  nodes: Schema.Array(
+                    Schema.Struct({
+                      id: Schema.String.check(Schema.isMaxLength(128)),
+                      name: Schema.String.check(Schema.isMaxLength(256)),
+                    }),
+                  ).check(Schema.isMaxLength(100)),
+                }),
+                projects: Schema.Struct({
+                  nodes: Schema.Array(
+                    Schema.Struct({
+                      id: Schema.String.check(Schema.isMaxLength(128)),
+                      name: Schema.String.check(Schema.isMaxLength(256)),
+                    }),
+                  ).check(Schema.isMaxLength(100)),
+                }),
+              }),
+            ).check(Schema.isMaxLength(100)),
+          }),
+        ),
         issueUpdate: Schema.optional(
           Schema.Struct({
             success: Schema.Boolean,
@@ -88,6 +125,9 @@ export class LinearAutopilotClient extends Context.Service<
       readonly updatedSince: string;
       readonly after?: string | null;
     }) => Effect.Effect<LinearAutopilotIssuePage, LinearAutopilotClientError>;
+    readonly listCatalog: (input: {
+      readonly accessToken: string;
+    }) => Effect.Effect<LinearAutopilotCatalog, LinearAutopilotClientError>;
     /** Moves one configured issue to a configured state; callers choose the state ID. */
     readonly updateIssueState: (input: {
       readonly accessToken: string;
@@ -112,6 +152,17 @@ const issueQuery = `query LinearAutopilotIntakeIssues($teamId: ID!, $updatedSinc
       project { id }
     }
     pageInfo { endCursor hasNextPage }
+  }
+}`;
+
+const catalogQuery = `query LinearAutopilotSettingsCatalog {
+  teams(first: 100) {
+    nodes {
+      id name key
+      states(first: 100) { nodes { id name type } }
+      labels(first: 100) { nodes { id name } }
+      projects(first: 100) { nodes { id name } }
+    }
   }
 }`;
 
@@ -179,6 +230,54 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const listCatalog: LinearAutopilotClient["Service"]["listCatalog"] = ({ accessToken }) =>
+    HttpClientRequest.post(LINEAR_GRAPHQL_URL).pipe(
+      HttpClientRequest.bearerToken(accessToken),
+      HttpClientRequest.bodyJson({ query: catalogQuery }),
+      Effect.mapError(() => new LinearAutopilotClientError({ reason: "request" })),
+      Effect.flatMap(httpClient.execute),
+      Effect.mapError(() => new LinearAutopilotClientError({ reason: "request" })),
+      Effect.flatMap(
+        HttpClientResponse.matchStatus({
+          "2xx": (response) =>
+            HttpClientResponse.schemaBodyJson(GraphqlResponse)(response).pipe(
+              Effect.mapError(() => new LinearAutopilotClientError({ reason: "decode" })),
+            ),
+          orElse: (response) =>
+            Effect.fail(
+              new LinearAutopilotClientError({ reason: "http", status: response.status }),
+            ),
+        }),
+      ),
+      Effect.flatMap((response) => {
+        if (response.errors && response.errors.length > 0) {
+          return Effect.fail(
+            new LinearAutopilotClientError({
+              reason: "graphql",
+              errorCount: response.errors.length,
+            }),
+          );
+        }
+        const teams = response.data?.teams?.nodes;
+        if (!teams) return Effect.fail(new LinearAutopilotClientError({ reason: "missing-data" }));
+        return Effect.succeed({
+          teams: teams.map((team) => ({
+            id: team.id,
+            name: team.name,
+            key: team.key,
+            states: team.states.nodes,
+            labels: team.labels.nodes,
+            projects: team.projects.nodes,
+          })),
+        });
+      }),
+      Effect.timeout(REQUEST_TIMEOUT),
+      Effect.catchTags({
+        TimeoutError: () => Effect.fail(new LinearAutopilotClientError({ reason: "request" })),
+      }),
+      Effect.withSpan("LinearAutopilotClient.listCatalog"),
+    );
+
   const updateIssueState: LinearAutopilotClient["Service"]["updateIssueState"] = (input) =>
     HttpClientRequest.post(LINEAR_GRAPHQL_URL).pipe(
       HttpClientRequest.bearerToken(input.accessToken),
@@ -221,7 +320,7 @@ const make = Effect.gen(function* () {
       Effect.withSpan("LinearAutopilotClient.updateIssueState"),
     );
 
-  return LinearAutopilotClient.of({ listIssues, updateIssueState });
+  return LinearAutopilotClient.of({ listIssues, listCatalog, updateIssueState });
 });
 
 export const layer = Layer.effect(LinearAutopilotClient, make);

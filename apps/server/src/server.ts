@@ -752,7 +752,13 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
-      Layer.provide(LinearAutopilotHttp.layer),
+      Layer.provide(
+        LinearAutopilotHttp.layer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(LinearAutopilotClient.layer, LinearAutopilotToken.layer),
+          ),
+        ),
+      ),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),

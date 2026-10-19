@@ -69,6 +69,7 @@ import {
   LinearAutopilotApproveRequest,
   LinearAutopilotApproveResult,
   LinearAutopilotPendingApprovals,
+  LinearAutopilotCatalog,
 } from "./linearAutopilot.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
@@ -682,6 +683,13 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
 ) {}
 
 class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopilot")
+  .add(
+    HttpApiEndpoint.get("catalog", "/api/linear-autopilot/catalog", {
+      headers: OptionalBearerHeaders,
+      success: LinearAutopilotCatalog,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("listPendingApprovals", "/api/linear-autopilot/approvals", {
       headers: OptionalBearerHeaders,

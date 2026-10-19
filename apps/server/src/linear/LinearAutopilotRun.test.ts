@@ -29,6 +29,7 @@ const makeLayer = (input: { readonly failRetry?: boolean } = {}) => {
       Layer.succeed(
         LinearAutopilotClient.LinearAutopilotClient,
         LinearAutopilotClient.LinearAutopilotClient.of({
+          listCatalog: () => Effect.succeed({ teams: [] }),
           listIssues: ({ accessToken }) => {
             requests += 1;
             if (accessToken === "token-1") {

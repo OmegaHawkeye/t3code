@@ -23,6 +23,22 @@ export type LinearAutopilotPendingApproval = typeof LinearAutopilotPendingApprov
 
 export const LinearAutopilotPendingApprovals = Schema.Array(LinearAutopilotPendingApproval);
 
+export const LinearAutopilotCatalog = Schema.Struct({
+  teams: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      key: Schema.String,
+      states: Schema.Array(
+        Schema.Struct({ id: Schema.String, name: Schema.String, type: Schema.String }),
+      ),
+      labels: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+      projects: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+    }),
+  ),
+});
+export type LinearAutopilotCatalog = typeof LinearAutopilotCatalog.Type;
+
 export const LinearAutopilotApproveRequest = Schema.Struct({
   runId: Schema.String,
   expectedRevision: Schema.Int,
