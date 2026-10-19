@@ -14,6 +14,7 @@ import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts"
 import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const now = DateTime.makeUnsafe("2026-10-19T11:00:00.000Z");
@@ -28,7 +29,12 @@ const reviewerModel: ModelSelection = {
 };
 
 const harness = (
-  options: { readonly completePlanning?: boolean; readonly projection?: unknown } = {},
+  options: {
+    readonly completePlanning?: boolean;
+    readonly projection?: unknown;
+    readonly pullRequestSummary?: unknown;
+    readonly pullRequestChecks?: unknown;
+  } = {},
 ) => {
   const reviewLaunches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotReadOnlyLaunchInput> = [];
   const approvalRequests: Array<
@@ -104,6 +110,19 @@ const harness = (
           updateIssueState: (input) =>
             Effect.sync(() => linearUpdates.push(input)).pipe(Effect.asVoid),
         }),
+    }),
+    Layer.mock(PullRequestService.PullRequestService)({
+      summary: () =>
+        Effect.succeed(
+          (options.pullRequestSummary ?? {
+            projectId,
+            repository: "owner/repository",
+            number: 23,
+            state: "open",
+            checksState: "passing",
+          }) as never,
+        ),
+      checks: () => Effect.succeed((options.pullRequestChecks ?? null) as never),
     }),
   ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory), Layer.provideMerge(NodeServices.layer));
   return {
@@ -209,7 +228,7 @@ const seedRun = (state: "planning" | "reviewing" | "implementing" | "verifying" 
 
 const seedAttempt = (
   runId: string,
-  phase: "planning" | "review" | "implementation" | "verification" | "delivery",
+  phase: "planning" | "review" | "implementation" | "verification" | "repair" | "delivery",
   summary: string,
   commandSuffix = "1",
 ) =>
@@ -545,5 +564,49 @@ it.effect("blocks delivery when the thread has no linked pull request", () => {
     const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
     assert.equal((yield* runs.getById(runId))?.state, "paused");
     assert.equal(setup.linearUpdates.at(-1)?.stateId, "blocked-state-1");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("opens one bounded CI repair follow-up for a failing pull request", () => {
+  const setup = harness({
+    projection: {
+      thread: {
+        modelSelection: plannerModel,
+        branchPullRequest: {
+          projectId,
+          repository: "owner/repository",
+          number: 23,
+          url: "https://github.com/owner/repository/pull/23",
+        },
+      },
+      runs: [],
+      messages: [],
+      turnItems: [],
+    },
+    pullRequestSummary: {
+      projectId,
+      repository: "owner/repository",
+      number: 23,
+      state: "open",
+      checksState: "failing",
+    },
+    pullRequestChecks: {
+      state: "open",
+      checks: [{ name: "unit-tests", status: "failure", description: "assertion failed" }],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("delivering");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedAttempt(runId, "verification", "VERDICT: PASS\\nChecks passed.");
+    yield* seedAttempt(runId, "delivery", "Pull request opened");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    const ciRepair = setup.followUps[0];
+    assert.isDefined(ciRepair);
+    assert.equal(ciRepair.phase, "delivery");
+    assert.equal(ciRepair.attemptNumber, 2);
+    assert.include(ciRepair.instruction, "unit-tests: assertion failed");
+    assert.include(ciRepair.instruction, "Do not create another pull request");
   }).pipe(Effect.provide(setup.layer));
 });

@@ -560,6 +560,7 @@ const layerLinearAutopilotReconciler = LinearAutopilotReconciler.layer.pipe(
       layerLinearAutopilotApproval,
     ),
   ),
+  Layer.provide(layerPullRequestService),
 );
 
 const layerLinearAutopilotWorker = Layer.effectDiscard(

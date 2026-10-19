@@ -18,6 +18,7 @@ import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPha
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
 import type { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementErrors from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -26,6 +27,7 @@ import type { ServerSettingsError } from "@t3tools/contracts";
 const APPROVAL_POLICY_VERSION = "human-review-v1";
 const MAX_PHASE_SUMMARY_LENGTH = 4000;
 const MAX_IMPLEMENTATION_REPAIR_ROUNDS = 2;
+const MAX_CI_REPAIR_ROUNDS = 1;
 
 export interface LinearAutopilotReconcileResult {
   readonly runsChecked: number;
@@ -49,6 +51,7 @@ export class LinearAutopilotReconciler extends Context.Service<
       | ThreadManagementErrors.ThreadManagementProviderInstanceDisabledError
       | ThreadManagementErrors.ThreadManagementError
       | Orchestrator.OrchestratorV2Error
+      | PullRequestService.PullRequestError
       | PlatformError.PlatformError
     >;
   }
@@ -84,6 +87,22 @@ const isTerminalFailure = (status: string) =>
   status === "cancelled" ||
   status === "rolled_back";
 
+const pullRequestRef = (input: {
+  readonly projectId: import("@t3tools/contracts").ProjectId;
+  readonly repository: string;
+  readonly number: number;
+  readonly url: string;
+}) => {
+  const match = /^https:\/\/([^/]+)\//u.exec(input.url);
+  if (match?.[1] === undefined) return null;
+  return {
+    projectId: input.projectId,
+    host: match[1],
+    repository: input.repository,
+    number: input.number,
+  };
+};
+
 const make = Effect.gen(function* () {
   const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
   const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
@@ -92,6 +111,7 @@ const make = Effect.gen(function* () {
   const phaseLaunch = yield* LinearAutopilotPhaseLaunch.LinearAutopilotPhaseLaunch;
   const approval = yield* LinearAutopilotApproval.LinearAutopilotApproval;
   const linear = yield* LinearAutopilotRun.LinearAutopilotRun;
+  const pullRequests = yield* PullRequestService.PullRequestService;
   const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
 
@@ -409,7 +429,7 @@ const make = Effect.gen(function* () {
             projection.success.thread.branchPullRequest ??
             projection.success.thread.linkedPullRequest ??
             null;
-          if (pullRequest === null) {
+          if (pullRequest === null || run.projectId === null) {
             const transitioned = yield* runs.transition({
               runId: run.runId,
               expectedRevision: run.revision,
@@ -428,6 +448,95 @@ const make = Effect.gen(function* () {
                 stateId: autopilot.blockedStateId,
               });
             }
+            continue;
+          }
+          const reference = pullRequestRef({ ...pullRequest, projectId: run.projectId });
+          if (reference === null) {
+            deferred += 1;
+            continue;
+          }
+          const pullRequestResult = yield* pullRequests.summary(reference).pipe(Effect.result);
+          if (pullRequestResult._tag === "Failure") {
+            deferred += 1;
+            continue;
+          }
+          const pullRequestSummary = pullRequestResult.success;
+          if (
+            pullRequestSummary.projectId !== run.projectId ||
+            pullRequestSummary.repository !== pullRequest.repository ||
+            pullRequestSummary.number !== pullRequest.number
+          ) {
+            deferred += 1;
+            continue;
+          }
+          if (pullRequestSummary.state !== "open") {
+            const transitioned = yield* runs.transition({
+              runId: run.runId,
+              expectedRevision: run.revision,
+              nextState: "paused",
+              updatedAt: yield* DateTime.now,
+            });
+            const autopilot = currentSettings.linearAutopilot;
+            if (
+              transitioned &&
+              autopilot.teamId.length > 0 &&
+              autopilot.blockedStateId.length > 0
+            ) {
+              const session = yield* linear.begin({ teamId: autopilot.teamId });
+              yield* session.updateIssueState({
+                issueId: run.issueId,
+                stateId: autopilot.blockedStateId,
+              });
+            }
+            continue;
+          }
+          if (pullRequestSummary.checksState !== "passing") {
+            if (
+              pullRequestSummary.checksState === "failing" &&
+              attempt.attemptNumber <= MAX_CI_REPAIR_ROUNDS
+            ) {
+              const checksResult = yield* pullRequests.checks(reference).pipe(Effect.result);
+              if (checksResult._tag === "Failure" || checksResult.success === null) {
+                deferred += 1;
+                continue;
+              }
+              const failures = checksResult.success.checks
+                .filter((check) => check.status === "failure" || check.status === "action-required")
+                .slice(0, 20)
+                .map((check) => `${check.name}: ${check.description ?? check.status}`)
+                .join("\n")
+                .slice(0, MAX_PHASE_SUMMARY_LENGTH);
+              const launched = yield* launchImplementationFollowUp(
+                run,
+                "delivery",
+                attempt.attemptNumber + 1,
+                `CI failed for pull request ${pullRequest.url}. Make one bounded repair to address only these reported failures, run the affected checks, then push the repair to the same pull request branch. Do not create another pull request, merge, or mark the Linear issue Done.\n\n${failures || "The host reports failing checks without detailed names."}`,
+              );
+              if (!launched) deferred += 1;
+              continue;
+            }
+            if (pullRequestSummary.checksState === "failing") {
+              const transitioned = yield* runs.transition({
+                runId: run.runId,
+                expectedRevision: run.revision,
+                nextState: "paused",
+                updatedAt: yield* DateTime.now,
+              });
+              const autopilot = currentSettings.linearAutopilot;
+              if (
+                transitioned &&
+                autopilot.teamId.length > 0 &&
+                autopilot.blockedStateId.length > 0
+              ) {
+                const session = yield* linear.begin({ teamId: autopilot.teamId });
+                yield* session.updateIssueState({
+                  issueId: run.issueId,
+                  stateId: autopilot.blockedStateId,
+                });
+              }
+              continue;
+            }
+            deferred += 1;
             continue;
           }
           const delivered = yield* runs.transition({
