@@ -1400,9 +1400,23 @@ export const make = Effect.gen(function* () {
         ),
       );
     const renewalTime = issuedAt ?? (yield* DateTime.now);
-    const grantExpiresAt = DateTime.add(renewalTime, {
+    const requestedGrantExpiry = DateTime.add(renewalTime, {
       milliseconds: Duration.toMillis(yield* sessionLifetime.idlePeriod),
     });
+    const currentSession = yield* authSessions
+      .getById({ sessionId })
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
+    if (Option.isNone(currentSession) || currentSession.value.revokedAt !== null) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "MCP grant cannot be renewed because its session is no longer active.",
+      });
+    }
+    const grantExpiresAt = DateTime.makeUnsafe(
+      Math.max(
+        currentSession.value.expiresAt.epochMilliseconds,
+        requestedGrantExpiry.epochMilliseconds,
+      ),
+    );
     yield* authSessions
       .setExpiresAt({ sessionId, expiresAt: grantExpiresAt })
       .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));

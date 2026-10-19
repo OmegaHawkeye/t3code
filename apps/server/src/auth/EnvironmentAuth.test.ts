@@ -40,9 +40,14 @@ const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Servic
     }),
   ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-server-test-" })));
 
-const layerEnvironmentAuth = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
+const layerEnvironmentAuth = (
+  overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
+  sessionLifetime: Layer.Layer<SessionLifetime.SessionLifetime, never> = SessionLifetime.layerFixed(
+    Duration.days(90),
+  ),
+) =>
   EnvironmentAuth.layer.pipe(
-    Layer.provide(SessionLifetime.layerFixed(Duration.days(90))),
+    Layer.provide(sessionLifetime),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
@@ -82,6 +87,40 @@ const requestMetadata = {
 };
 
 it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
+  it.effect("does not shorten an existing MCP grant when the idle period is reduced", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const authSessions = yield* AuthSessions.AuthSessionRepository;
+      const issued = yield* sessions.issue({
+        subject: "mcp-client",
+        method: "bearer-access-token",
+        scopes: ["orchestration:read"],
+        ttl: Duration.hours(1),
+        sessionTtl: Duration.days(90),
+        renewable: false,
+        kind: "oauth-grant",
+      });
+      const before = yield* authSessions.getById({ sessionId: issued.sessionId });
+      expect(Option.isSome(before)).toBe(true);
+      if (Option.isNone(before)) return;
+
+      const renewed = yield* serverAuth.renewMcpClientSession(issued.sessionId);
+      const after = yield* authSessions.getById({ sessionId: issued.sessionId });
+      expect(renewed.grantExpiresAt.epochMilliseconds).toBe(
+        before.value.expiresAt.epochMilliseconds,
+      );
+      expect(Option.isSome(after)).toBe(true);
+      if (Option.isSome(after)) {
+        expect(after.value.expiresAt.epochMilliseconds).toBe(
+          before.value.expiresAt.epochMilliseconds,
+        );
+      }
+    }).pipe(
+      Effect.provide(layerEnvironmentAuth(undefined, SessionLifetime.layerFixed(Duration.days(1)))),
+    ),
+  );
+
   it.effect("uses the reusable dev cookie without overriding a normal scoped cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

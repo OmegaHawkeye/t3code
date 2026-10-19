@@ -2,6 +2,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+import { EnvironmentId } from "@t3tools/contracts";
 
 const state = vi.hoisted(() => ({
   idlePeriodDays: 90,
@@ -10,8 +11,12 @@ const state = vi.hoisted(() => ({
 
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
-  usePrimarySettings: (() => state.idlePeriodDays) as never,
-  useUpdatePrimarySettings: () => state.update,
+  useEnvironmentSettings: (() => state.idlePeriodDays) as never,
+  useUpdateEnvironmentSettings: () => state.update,
+}));
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentScope: (() => true) as never,
 }));
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
@@ -38,6 +43,8 @@ vi.mock(import("./settingsSearch"), async (original) => ({
 
 import { AuthIdlePeriodSetting } from "./AuthIdlePeriodSetting";
 
+const environmentId = EnvironmentId.make("auth-idle-period-test");
+
 let root: Root;
 let container: HTMLDivElement;
 
@@ -55,10 +62,14 @@ afterEach(async () => {
 });
 
 it("shows the current value and persists a valid change on blur", async () => {
-  await act(async () => root.render(<AuthIdlePeriodSetting />));
+  await act(async () =>
+    root.render(
+      <AuthIdlePeriodSetting environmentId={environmentId} environmentLabel="Test machine" />,
+    ),
+  );
 
   const input = container.querySelector<HTMLInputElement>(
-    'input[aria-label="Authentication idle period in days"]',
+    'input[aria-label="Authentication idle period in days for Test machine"]',
   );
   expect(input?.value).toBe("90");
   expect(input?.min).toBe("1");
@@ -72,9 +83,13 @@ it("shows the current value and persists a valid change on blur", async () => {
 });
 
 it("does not persist a value outside the supported range", async () => {
-  await act(async () => root.render(<AuthIdlePeriodSetting />));
+  await act(async () =>
+    root.render(
+      <AuthIdlePeriodSetting environmentId={environmentId} environmentLabel="Test machine" />,
+    ),
+  );
   const input = container.querySelector<HTMLInputElement>(
-    'input[aria-label="Authentication idle period in days"]',
+    'input[aria-label="Authentication idle period in days for Test machine"]',
   )!;
 
   await userEvent.fill(input, "361");
