@@ -36,6 +36,7 @@ export const LinearAutopilotRun = Schema.Struct({
   issueId: Schema.String,
   generation: Schema.Int,
   state: LinearAutopilotRunState,
+  projectId: Schema.NullOr(ProjectId),
   sourceUpdatedAt: Schema.DateTimeUtcFromString,
   snapshotHash: Schema.String,
   revision: Schema.Int,
@@ -57,6 +58,7 @@ const NewRun = Schema.Struct({
   runId: Schema.String,
   workspaceId: Schema.String,
   issueId: Schema.String,
+  projectId: ProjectId,
   generation: Schema.Int,
   sourceUpdatedAt: Schema.DateTimeUtcFromString,
   snapshotHash: Schema.String,
@@ -114,6 +116,7 @@ export class LinearAutopilotRunRepository extends Context.Service<
     readonly createOrGetActive: (input: {
       readonly workspaceId: string;
       readonly issueId: string;
+      readonly projectId: ProjectId;
       readonly sourceUpdatedAt: DateTime.Utc;
       readonly snapshotHash: string;
       readonly createdAt: DateTime.Utc;
@@ -147,6 +150,7 @@ const make = Effect.gen(function* () {
         run_id AS "runId",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
+        project_id AS "projectId",
         generation AS "generation",
         state AS "state",
         source_updated_at AS "sourceUpdatedAt",
@@ -178,6 +182,7 @@ const make = Effect.gen(function* () {
         run_id AS "runId",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
+        project_id AS "projectId",
         generation AS "generation",
         state AS "state",
         source_updated_at AS "sourceUpdatedAt",
@@ -207,22 +212,24 @@ const make = Effect.gen(function* () {
       runId,
       workspaceId,
       issueId,
+      projectId,
       generation,
       sourceUpdatedAt,
       snapshotHash,
       createdAt,
     }) => sql`
       INSERT INTO linear_autopilot_runs (
-        run_id, workspace_id, issue_id, generation, state,
+        run_id, workspace_id, issue_id, project_id, generation, state,
         source_updated_at, snapshot_hash, created_at, updated_at
       ) VALUES (
-        ${runId}, ${workspaceId}, ${issueId}, ${generation}, 'queued',
+        ${runId}, ${workspaceId}, ${issueId}, ${projectId}, ${generation}, 'queued',
         ${sourceUpdatedAt}, ${snapshotHash}, ${createdAt}, ${createdAt}
       )
       RETURNING
         run_id AS "runId",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
+        project_id AS "projectId",
         generation AS "generation",
         state AS "state",
         source_updated_at AS "sourceUpdatedAt",
@@ -249,6 +256,7 @@ const make = Effect.gen(function* () {
         run_id AS "runId",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
+        project_id AS "projectId",
         generation AS "generation",
         state AS "state",
         source_updated_at AS "sourceUpdatedAt",

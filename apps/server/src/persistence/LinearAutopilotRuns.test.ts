@@ -22,6 +22,7 @@ const now = DateTime.makeUnsafe("2026-10-19T10:00:00.000Z");
 const runInput = (issueId: string) => ({
   workspaceId: "workspace-1",
   issueId,
+  projectId: ProjectId.make("trusted-project-1"),
   sourceUpdatedAt: now,
   snapshotHash: "a".repeat(64),
   createdAt: now,
@@ -37,6 +38,8 @@ const seedIssue = (issueId: string) =>
       identifier: "OME-223",
       title: "Linear intake",
       url: "https://linear.app/example/issue/OME-223",
+      description: "",
+      projectId: ProjectId.make("trusted-project-1"),
       sourceUpdatedAt: DateTime.formatIso(now),
       observedAt: DateTime.formatIso(now),
     });

@@ -4,6 +4,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { ProjectId } from "@t3tools/contracts";
+
 import * as LinearAutopilotIntake from "./LinearAutopilotIntake.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
@@ -28,6 +30,8 @@ const candidate = (
   identifier: "OME-223",
   title: sourceUpdatedAt === revision1 ? "Initial title" : "Updated title",
   url: "https://linear.app/example/issue/OME-223",
+  description: "Issue description",
+  projectId: ProjectId.make("trusted-project-1"),
   sourceUpdatedAt,
   observedAt,
 });
@@ -53,6 +57,12 @@ layer("LinearAutopilotIntakeRepository", (it) => {
 
       yield* intake.markDispatched(pending[0]!.outboxId, DateTime.makeUnsafe(observedAt));
       assert.equal((yield* intake.listPending(10)).length, 1);
+      const context = yield* intake.getIssueContext({
+        workspaceId: "workspace-1",
+        issueId: "issue-1",
+      });
+      assert.equal(context?.description, "Issue description");
+      assert.equal(context?.projectId, ProjectId.make("trusted-project-1"));
     }),
   );
 });

@@ -13,6 +13,7 @@ import {
   PersistenceDecodeError,
   toPersistenceSqlError,
 } from "./Errors.ts";
+import { ProjectId } from "@t3tools/contracts";
 
 const LinearAutopilotIssueMetadata = Schema.Struct({
   workspaceId: Schema.String.check(Schema.isMaxLength(128)),
@@ -20,6 +21,8 @@ const LinearAutopilotIssueMetadata = Schema.Struct({
   identifier: Schema.String.check(Schema.isMaxLength(64)),
   title: Schema.String.check(Schema.isMaxLength(500)),
   url: Schema.String.check(Schema.isMaxLength(2048)),
+  description: Schema.String.check(Schema.isMaxLength(16_000)),
+  projectId: ProjectId,
 });
 
 export const LinearAutopilotCandidate = Schema.Struct({
@@ -34,6 +37,8 @@ const SnapshotHashInput = Schema.Struct({
   identifier: Schema.String,
   title: Schema.String,
   url: Schema.String,
+  description: Schema.String,
+  projectId: ProjectId,
   sourceUpdatedAt: Schema.String,
 });
 const SnapshotHashCodec = Schema.fromJsonString(Schema.toCodecJson(SnapshotHashInput));
@@ -47,6 +52,8 @@ const snapshotHash = (
     readonly identifier: string;
     readonly title: string;
     readonly url: string;
+    readonly description: string;
+    readonly projectId: typeof ProjectId.Type;
     readonly sourceUpdatedAt: DateTime.Utc | string;
   },
 ): Effect.Effect<string> =>
@@ -54,6 +61,8 @@ const snapshotHash = (
     identifier: candidate.identifier,
     title: candidate.title,
     url: candidate.url,
+    description: candidate.description,
+    projectId: candidate.projectId,
     sourceUpdatedAt:
       typeof candidate.sourceUpdatedAt === "string"
         ? candidate.sourceUpdatedAt
@@ -78,7 +87,24 @@ const PendingOutboxRequest = Schema.Struct({
 });
 const PendingOutboxRow = Schema.Struct({
   outboxId: Schema.String,
-  ...LinearAutopilotIssueMetadata.fields,
+  workspaceId: LinearAutopilotIssueMetadata.fields.workspaceId,
+  issueId: LinearAutopilotIssueMetadata.fields.issueId,
+  identifier: LinearAutopilotIssueMetadata.fields.identifier,
+  title: LinearAutopilotIssueMetadata.fields.title,
+  url: LinearAutopilotIssueMetadata.fields.url,
+  description: Schema.String,
+  projectId: Schema.NullOr(ProjectId),
+  sourceUpdatedAt: Schema.DateTimeUtcFromString,
+  snapshotHash: Schema.String,
+});
+const IssueContext = Schema.Struct({
+  workspaceId: LinearAutopilotIssueMetadata.fields.workspaceId,
+  issueId: LinearAutopilotIssueMetadata.fields.issueId,
+  identifier: LinearAutopilotIssueMetadata.fields.identifier,
+  title: LinearAutopilotIssueMetadata.fields.title,
+  url: LinearAutopilotIssueMetadata.fields.url,
+  description: Schema.String,
+  projectId: Schema.NullOr(ProjectId),
   sourceUpdatedAt: Schema.DateTimeUtcFromString,
   snapshotHash: Schema.String,
 });
@@ -93,6 +119,11 @@ export class LinearAutopilotIntakeRepository extends Context.Service<
     readonly listPending: (
       limit: number,
     ) => Effect.Effect<ReadonlyArray<typeof PendingOutboxRow.Type>, PersistenceSqlError>;
+    /** Loads the durable issue snapshot by its stable Linear source identity. */
+    readonly getIssueContext: (input: {
+      readonly workspaceId: string;
+      readonly issueId: string;
+    }) => Effect.Effect<typeof IssueContext.Type | null, PersistenceSqlError>;
     readonly markDispatched: (
       outboxId: string,
       dispatchedAt: DateTime.Utc,
@@ -124,15 +155,17 @@ const make = Effect.gen(function* () {
       identifier,
       title,
       url,
+      description,
+      projectId,
       sourceUpdatedAt,
       snapshotHash,
       createdAt,
     }) => sql`
       INSERT INTO linear_autopilot_issues (
-        workspace_id, issue_id, identifier, title, url,
+        workspace_id, issue_id, identifier, title, url, description, t3_project_id,
         source_updated_at, snapshot_hash, created_at
       ) VALUES (
-        ${workspaceId}, ${issueId}, ${identifier}, ${title}, ${url},
+        ${workspaceId}, ${issueId}, ${identifier}, ${title}, ${url}, ${description}, ${projectId},
         ${sourceUpdatedAt}, ${snapshotHash},
         ${createdAt}
       )
@@ -140,6 +173,8 @@ const make = Effect.gen(function* () {
         identifier = excluded.identifier,
         title = excluded.title,
         url = excluded.url,
+        description = excluded.description,
+        t3_project_id = excluded.t3_project_id,
         source_updated_at = excluded.source_updated_at,
         snapshot_hash = excluded.snapshot_hash
       WHERE excluded.source_updated_at > linear_autopilot_issues.source_updated_at
@@ -164,14 +199,16 @@ const make = Effect.gen(function* () {
       identifier,
       title,
       url,
+      description,
+      projectId,
       createdAt,
     }) => sql`
       INSERT INTO linear_autopilot_outbox (
         outbox_id, workspace_id, issue_id, source_updated_at, snapshot_hash,
-        identifier, title, url, created_at
+        identifier, title, url, description, t3_project_id, created_at
       ) VALUES (
         ${outboxId}, ${workspaceId}, ${issueId}, ${sourceUpdatedAt}, ${snapshotHash},
-        ${identifier}, ${title}, ${url}, ${createdAt}
+        ${identifier}, ${title}, ${url}, ${description}, ${projectId}, ${createdAt}
       )
       ON CONFLICT (outbox_id) DO NOTHING
     `,
@@ -189,11 +226,26 @@ const make = Effect.gen(function* () {
         outbox.snapshot_hash AS "snapshotHash",
         outbox.identifier AS "identifier",
         outbox.title AS "title",
-        outbox.url AS "url"
+        outbox.url AS "url",
+        outbox.description AS "description",
+        outbox.t3_project_id AS "projectId"
       FROM linear_autopilot_outbox AS outbox
       WHERE outbox.dispatched_at IS NULL
       ORDER BY outbox.created_at, outbox.outbox_id
       LIMIT ${limit}
+    `,
+  });
+
+  const selectIssueContext = SqlSchema.findOneOption({
+    Request: Schema.Struct({ workspaceId: Schema.String, issueId: Schema.String }),
+    Result: IssueContext,
+    execute: ({ workspaceId, issueId }) => sql`
+      SELECT workspace_id AS "workspaceId", issue_id AS "issueId",
+        identifier, title, url, description, t3_project_id AS "projectId",
+        source_updated_at AS "sourceUpdatedAt", snapshot_hash AS "snapshotHash"
+      FROM linear_autopilot_issues
+      WHERE workspace_id = ${workspaceId} AND issue_id = ${issueId}
+      LIMIT 1
     `,
   });
 
@@ -258,6 +310,8 @@ const make = Effect.gen(function* () {
                   identifier: candidate.identifier,
                   title: candidate.title,
                   url: candidate.url,
+                  description: candidate.description,
+                  projectId: candidate.projectId,
                   createdAt: candidate.observedAt,
                 }).pipe(
                   Effect.mapError(
@@ -280,6 +334,11 @@ const make = Effect.gen(function* () {
     listPending: (limit) =>
       listPendingRows({ limit }).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.listPending:query")),
+      ),
+    getIssueContext: (input) =>
+      selectIssueContext(input).pipe(
+        Effect.map((row) => (row._tag === "Some" ? row.value : null)),
+        Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.getIssueContext:query")),
       ),
     markDispatched: (outboxId, dispatchedAt) =>
       markDispatchedRow({ outboxId, dispatchedAt }).pipe(
