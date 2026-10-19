@@ -10,6 +10,7 @@ import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts"
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as LinearAutopilotPhaseLaunch from "./LinearAutopilotPhaseLaunch.ts";
 
 const now = DateTime.makeUnsafe("2026-10-19T11:00:00.000Z");
@@ -34,6 +35,9 @@ const harness = () => {
             resumed: false,
           };
         }),
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      sendToThread: () => Effect.die("Unexpected follow-up send"),
     }),
   ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory), Layer.provideMerge(NodeServices.layer));
   return {

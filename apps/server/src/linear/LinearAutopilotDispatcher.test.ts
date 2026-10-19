@@ -79,6 +79,7 @@ const harness = (projectDefaultModelSelection: ModelSelection | null = modelSele
             threadId: "implementation-thread",
           };
         }),
+      launchFollowUp: () => Effect.die("Unexpected follow-up launch"),
     }),
   ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory), Layer.provideMerge(NodeServices.layer));
 

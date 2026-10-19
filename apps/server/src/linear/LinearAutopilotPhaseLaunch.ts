@@ -1,4 +1,10 @@
-import { CommandId, type ModelSelection, type ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ThreadId,
+  type ModelSelection,
+  type ProjectId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -37,6 +43,16 @@ export interface LinearAutopilotImplementationLaunchInput {
   readonly approvedPlan: string;
 }
 
+export interface LinearAutopilotFollowUpInput {
+  readonly runId: string;
+  readonly phase: "verification" | "repair" | "delivery";
+  readonly attemptNumber: number;
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly modelSelection: ModelSelection;
+  readonly instruction: string;
+}
+
 export class LinearAutopilotPhaseLaunch extends Context.Service<
   LinearAutopilotPhaseLaunch,
   {
@@ -60,12 +76,23 @@ export class LinearAutopilotPhaseLaunch extends Context.Service<
       | ThreadLaunch.ThreadLaunchBaseRefError
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
+    /** Adds an idempotent phase prompt to the implementation thread and its isolated worktree. */
+    readonly launchFollowUp: (
+      input: LinearAutopilotFollowUpInput,
+    ) => Effect.Effect<
+      { readonly attemptId: string; readonly commandId: string; readonly threadId: string },
+      | PersistenceErrors.PersistenceSqlError
+      | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+      | ThreadManagement.ThreadManagementError
+      | import("../orchestration-v2/Orchestrator.ts").OrchestratorV2Error
+    >;
   }
 >()("t3/linear/LinearAutopilotPhaseLaunch") {}
 
 const make = Effect.gen(function* () {
   const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
   const threadLaunch = yield* ThreadLaunch.ThreadLaunchService;
+  const threads = yield* ThreadManagement.ThreadManagementService;
 
   const launchReadOnly: LinearAutopilotPhaseLaunch["Service"]["launchReadOnly"] = (input) =>
     Effect.gen(function* () {
@@ -189,7 +216,35 @@ const make = Effect.gen(function* () {
       return { attemptId: attempt.attemptId, commandId, threadId: launched.threadId };
     });
 
-  return LinearAutopilotPhaseLaunch.of({ launchReadOnly, launchImplementation });
+  const launchFollowUp: LinearAutopilotPhaseLaunch["Service"]["launchFollowUp"] = (input) =>
+    Effect.gen(function* () {
+      const commandId = CommandId.make(
+        `linear-autopilot:${input.runId}:${input.phase}:${input.attemptNumber}`,
+      );
+      const messageId = MessageId.make(`${commandId}:message`);
+      const { attempt } = yield* attempts.begin({
+        runId: input.runId,
+        phase: input.phase,
+        commandId,
+        startedAt: yield* DateTime.now,
+      });
+      yield* threads.sendToThread({
+        projectId: input.projectId,
+        commandId,
+        threadId: input.threadId,
+        messageId,
+        text: input.instruction,
+        attachments: [],
+        modelSelection: input.modelSelection,
+        mode: "auto",
+        createdBy: "system",
+        creationSource: "server",
+      });
+      yield* attempts.markRunning({ attemptId: attempt.attemptId, threadId: input.threadId });
+      return { attemptId: attempt.attemptId, commandId, threadId: input.threadId };
+    });
+
+  return LinearAutopilotPhaseLaunch.of({ launchReadOnly, launchImplementation, launchFollowUp });
 });
 
 export const layer = Layer.effect(LinearAutopilotPhaseLaunch, make);

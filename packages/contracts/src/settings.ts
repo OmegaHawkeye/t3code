@@ -1055,6 +1055,7 @@ export const LinearAutopilotSettings = Schema.Struct({
   ),
   needsHumanApprovalStateId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   blockedStateId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  reviewStateId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   triggerLabelIds: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

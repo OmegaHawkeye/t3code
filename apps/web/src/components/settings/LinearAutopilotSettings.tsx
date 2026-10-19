@@ -32,6 +32,7 @@ export function LinearAutopilotSettingsPanel() {
     settings.needsHumanApprovalStateId,
   );
   const [blockedStateId, setBlockedStateId] = useState(settings.blockedStateId);
+  const [reviewStateId, setReviewStateId] = useState(settings.reviewStateId);
   const [triggerLabelIds, setTriggerLabelIds] = useState(settings.triggerLabelIds.join("\n"));
   const [projectMappings, setProjectMappings] = useState(
     JSON.stringify(settings.projectMappings, null, 2),
@@ -48,6 +49,7 @@ export function LinearAutopilotSettingsPanel() {
     setReadyStateIds(settings.readyStateIds.join("\n"));
     setNeedsHumanApprovalStateId(settings.needsHumanApprovalStateId);
     setBlockedStateId(settings.blockedStateId);
+    setReviewStateId(settings.reviewStateId);
     setTriggerLabelIds(settings.triggerLabelIds.join("\n"));
     setProjectMappings(JSON.stringify(settings.projectMappings, null, 2));
     setClientId("");
@@ -68,6 +70,7 @@ export function LinearAutopilotSettingsPanel() {
           readyStateIds: parseIds(readyStateIds),
           needsHumanApprovalStateId,
           blockedStateId,
+          reviewStateId,
           triggerLabelIds: parseIds(triggerLabelIds),
           projectMappings: mappings,
           clientId: clearClientId
@@ -130,6 +133,16 @@ export function LinearAutopilotSettingsPanel() {
             value={blockedStateId}
             disabled={!writeAllowed}
             onChange={(event) => setBlockedStateId(event.target.value)}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="In Review status ID"
+          description="Linear status UUID after verified work is delivered in an open pull request."
+        >
+          <Input
+            value={reviewStateId}
+            disabled={!writeAllowed}
+            onChange={(event) => setReviewStateId(event.target.value)}
           />
         </SettingsRow>
         <SettingsRow title="OME team ID" description="Linear team UUID to poll.">

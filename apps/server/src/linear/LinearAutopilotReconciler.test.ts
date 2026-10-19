@@ -35,6 +35,7 @@ const harness = (
     LinearAutopilotApproval.LinearAutopilotApprovalRequest & { readonly reviewerApproved: boolean }
   > = [];
   const linearUpdates: Array<{ readonly issueId: string; readonly stateId: string }> = [];
+  const followUps: Array<LinearAutopilotPhaseLaunch.LinearAutopilotFollowUpInput> = [];
   const dependencies = Layer.mergeAll(
     LinearAutopilotIntake.layer,
     LinearAutopilotRuns.layer,
@@ -44,6 +45,8 @@ const harness = (
       linearAutopilot: {
         teamId: "team-1",
         needsHumanApprovalStateId: "approval-state-1",
+        blockedStateId: "blocked-state-1",
+        reviewStateId: "review-state-1",
       },
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -76,6 +79,15 @@ const harness = (
           };
         }),
       launchImplementation: () => Effect.die("Unexpected implementation launch"),
+      launchFollowUp: (input) =>
+        Effect.sync(() => {
+          followUps.push(input);
+          return {
+            attemptId: "follow-up-attempt",
+            commandId: `command-${input.phase}-${input.attemptNumber}`,
+            threadId: input.threadId,
+          };
+        }),
     }),
     Layer.mock(LinearAutopilotApproval.LinearAutopilotApproval)({
       requestHumanApproval: (input) =>
@@ -99,10 +111,11 @@ const harness = (
     reviewLaunches,
     approvalRequests,
     linearUpdates,
+    followUps,
   };
 };
 
-const seedRun = (state: "planning" | "reviewing" | "implementing") =>
+const seedRun = (state: "planning" | "reviewing" | "implementing" | "verifying" | "delivering") =>
   Effect.gen(function* () {
     const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
     yield* intake.ingest({
@@ -141,7 +154,7 @@ const seedRun = (state: "planning" | "reviewing" | "implementing") =>
         updatedAt: now,
       });
     }
-    if (state === "implementing") {
+    if (state === "implementing" || state === "verifying" || state === "delivering") {
       yield* runs.transition({
         runId: run.runId,
         expectedRevision: 2,
@@ -170,17 +183,42 @@ const seedRun = (state: "planning" | "reviewing" | "implementing") =>
         nextState: "implementing",
         updatedAt: now,
       });
+      if (state === "verifying" || state === "delivering") {
+        const implementing = yield* runs.getById(run.runId);
+        assert.isNotNull(implementing);
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: implementing.revision,
+          nextState: "verifying",
+          updatedAt: now,
+        });
+      }
+      if (state === "delivering") {
+        const verifying = yield* runs.getById(run.runId);
+        assert.isNotNull(verifying);
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: verifying.revision,
+          nextState: "delivering",
+          updatedAt: now,
+        });
+      }
     }
     return run.runId;
   });
 
-const seedAttempt = (runId: string, phase: "planning" | "review", summary: string) =>
+const seedAttempt = (
+  runId: string,
+  phase: "planning" | "review" | "implementation" | "verification" | "delivery",
+  summary: string,
+  commandSuffix = "1",
+) =>
   Effect.gen(function* () {
     const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
     const attempt = yield* attempts.begin({
       runId,
       phase,
-      commandId: `command-${phase}`,
+      commandId: `command-${phase}-${commandSuffix}`,
       startedAt: now,
     });
     yield* attempts.markRunning({
@@ -197,7 +235,10 @@ const seedAttempt = (runId: string, phase: "planning" | "review", summary: strin
     });
   });
 
-const seedRunningAttempt = (runId: string, phase: "planning" | "review" | "implementation") =>
+const seedRunningAttempt = (
+  runId: string,
+  phase: "planning" | "review" | "implementation" | "verification" | "delivery",
+) =>
   Effect.gen(function* () {
     const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
     const attempt = yield* attempts.begin({
@@ -331,5 +372,178 @@ it.effect("moves provider permission requests to Needs Human Approval in Linear"
     assert.deepStrictEqual(setup.linearUpdates, [
       { issueId: "issue-1", stateId: "approval-state-1" },
     ]);
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("launches verification as a follow-up in the implementation thread", () => {
+  const setup = harness({
+    projection: {
+      thread: { modelSelection: plannerModel },
+      runs: [],
+      messages: [],
+      turnItems: [],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("verifying");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    assert.equal(setup.followUps.length, 1);
+    const followUp = setup.followUps[0];
+    assert.isDefined(followUp);
+    assert.equal(followUp.runId, runId);
+    assert.equal(followUp.phase, "verification");
+    assert.equal(followUp.attemptNumber, 1);
+    assert.equal(followUp.threadId, ThreadId.make("review-thread"));
+    assert.equal(followUp.modelSelection.instanceId, plannerModel.instanceId);
+    assert.include(followUp.instruction, "VERDICT: PASS or VERDICT: FAIL");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("records explicit passing verification before entering delivery", () => {
+  const setup = harness({
+    projection: {
+      thread: { modelSelection: plannerModel },
+      runs: [{ ordinal: 1, status: "completed", id: "verification-provider-run" }],
+      messages: [
+        {
+          role: "assistant",
+          runId: "verification-provider-run",
+          text: "VERDICT: PASS\\n`pnpm test`: exit 0; `pnpm typecheck`: exit 0.",
+          updatedAt: now,
+        },
+      ],
+      turnItems: [],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("verifying");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedRunningAttempt(runId, "verification");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    const result = yield* reconciler.reconcile();
+    assert.equal(result.phasesCompleted, 1);
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    assert.equal((yield* runs.getById(runId))?.state, "delivering");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("uses a bounded repair follow-up after verification failure", () => {
+  const setup = harness({
+    projection: {
+      thread: { modelSelection: plannerModel },
+      runs: [{ ordinal: 1, status: "completed", id: "verification-provider-run" }],
+      messages: [
+        {
+          role: "assistant",
+          runId: "verification-provider-run",
+          text: "VERDICT: FAIL\\n`pnpm test` failed in the new approval route.",
+          updatedAt: now,
+        },
+      ],
+      turnItems: [],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("verifying");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedRunningAttempt(runId, "verification");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    const repair = setup.followUps[0];
+    assert.isDefined(repair);
+    assert.equal(repair.phase, "repair");
+    assert.equal(repair.attemptNumber, 1);
+    assert.include(repair.instruction, "pnpm test");
+    assert.include(repair.instruction, "Do not commit, push");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("re-verifies after a successful repair", () => {
+  const setup = harness({
+    projection: { thread: { modelSelection: plannerModel }, runs: [], messages: [], turnItems: [] },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("verifying");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedAttempt(runId, "verification", "VERDICT: FAIL\\nFirst check failed.");
+    yield* seedAttempt(runId, "repair", "Fixed the failing assertion.");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    const verification = setup.followUps[0];
+    assert.isDefined(verification);
+    assert.equal(verification.phase, "verification");
+    assert.equal(verification.attemptNumber, 2);
+    assert.include(verification.instruction, "Re-run all applicable verification commands");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("launches the delivery prompt only after verified work", () => {
+  const setup = harness({
+    projection: { thread: { modelSelection: plannerModel }, runs: [], messages: [], turnItems: [] },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("delivering");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedAttempt(runId, "verification", "VERDICT: PASS\\nChecks passed.");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    const delivery = setup.followUps[0];
+    assert.isDefined(delivery);
+    assert.equal(delivery.phase, "delivery");
+    assert.include(delivery.instruction, "open one pull request");
+    assert.include(delivery.instruction, "Never merge");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("marks delivered only when T3 has a linked pull request", () => {
+  const setup = harness({
+    projection: {
+      thread: {
+        modelSelection: plannerModel,
+        branchPullRequest: {
+          projectId,
+          repository: "owner/repository",
+          number: 23,
+          url: "https://github.com/owner/repository/pull/23",
+        },
+      },
+      runs: [],
+      messages: [],
+      turnItems: [],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("delivering");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedAttempt(runId, "verification", "VERDICT: PASS\\nChecks passed.");
+    yield* seedAttempt(
+      runId,
+      "delivery",
+      "Pull request opened: https://github.com/owner/repository/pull/23",
+    );
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    assert.equal((yield* runs.getById(runId))?.state, "delivered");
+    assert.equal(setup.linearUpdates.at(-1)?.stateId, "review-state-1");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("blocks delivery when the thread has no linked pull request", () => {
+  const setup = harness({
+    projection: { thread: { modelSelection: plannerModel }, runs: [], messages: [], turnItems: [] },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("delivering");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedAttempt(runId, "verification", "VERDICT: PASS\\nChecks passed.");
+    yield* seedAttempt(runId, "delivery", "The pull request tool failed.");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    assert.equal((yield* runs.getById(runId))?.state, "paused");
+    assert.equal(setup.linearUpdates.at(-1)?.stateId, "blocked-state-1");
   }).pipe(Effect.provide(setup.layer));
 });
