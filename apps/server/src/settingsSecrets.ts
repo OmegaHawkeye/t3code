@@ -2,6 +2,7 @@ import {
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
+  LinearAutopilotSettings,
   type ServerSettings,
   UsageLimitSourceConfig,
   secretSettingsFields,
@@ -31,6 +32,7 @@ const providerSecretFields = new Map([
   ),
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
+const linearAutopilotSecretFields = secretSettingsFields(LinearAutopilotSettings);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -142,5 +144,11 @@ export function mapSettingsSecrets(
     ]),
   ) as ServerSettings["usageLimitSources"];
 
-  return { ...settings, providerInstances, sourceControlHosts, usageLimitSources };
+  const linearAutopilot = mapFields(
+    settings.linearAutopilot,
+    linearAutopilotSecretFields,
+    (field) => `linear-autopilot-${field === "clientId" ? "client-id" : "client-secret"}`,
+  ) as ServerSettings["linearAutopilot"];
+
+  return { ...settings, providerInstances, sourceControlHosts, usageLimitSources, linearAutopilot };
 }

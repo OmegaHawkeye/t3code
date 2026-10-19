@@ -1045,6 +1045,27 @@ export const AuthIdlePeriodDays = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_AUTH_IDLE_PERIOD_DAYS, maximum: MAX_AUTH_IDLE_PERIOD_DAYS }),
 );
 
+export const LinearAutopilotSettings = Schema.Struct({
+  mode: Schema.Literals(["disabled", "shadow"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("disabled" as const)),
+  ),
+  teamId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  readyStateIds: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  needsHumanApprovalStateId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  blockedStateId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  triggerLabelIds: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  projectMappings: Schema.Record(TrimmedNonEmptyString, ProjectId).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  clientId: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
+  clientSecret: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type LinearAutopilotSettings = typeof LinearAutopilotSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Null means no client has migrated this preference yet; an empty value is
   // authoritative so another device cannot resurrect cleared preferences.
@@ -1224,6 +1245,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
 
+  linearAutopilot: LinearAutopilotSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(LinearAutopilotSettings)({}))),
+  ),
+
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1341,6 +1366,7 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  linearAutopilot: Schema.optionalKey(LinearAutopilotSettings),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),

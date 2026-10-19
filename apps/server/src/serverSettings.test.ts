@@ -1526,6 +1526,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               enabled: true,
             },
           },
+          linearAutopilot: {
+            ...DEFAULT_SERVER_SETTINGS.linearAutopilot,
+            clientId: "linear-client-id-secret",
+            clientSecret: "linear-client-secret-secret",
+          },
         });
         const values = [
           "config-secret",
@@ -1534,6 +1539,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           "bitbucket-secret",
           "gitcafe-secret",
           "quota-secret",
+          "linear-client-id-secret",
+          "linear-client-secret-secret",
         ];
         const client = ServerSettingsModule.redactServerSettingsForClient(saved);
         const disk = yield* fs.readFileString(config.settingsPath);
@@ -1548,8 +1555,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           providerInstances: client.providerInstances,
           sourceControlHosts: client.sourceControlHosts,
           usageLimitSources: client.usageLimitSources,
+          linearAutopilot: client.linearAutopilot,
         });
         for (const value of values) assert.include(JSON.stringify(echoed), value);
+        assert.equal(echoed.linearAutopilot.clientId, "linear-client-id-secret");
+        assert.equal(echoed.linearAutopilot.clientSecret, "linear-client-secret-secret");
         const renamed = yield* service.updateProviderInstance({
           operation: "upsert",
           instanceId,

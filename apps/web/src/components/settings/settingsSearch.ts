@@ -22,6 +22,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/integrations"
+  | "/settings/linear-autopilot"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
   | "/settings/storage"
@@ -80,6 +81,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
+  "/settings/linear-autopilot": "Linear Autopilot",
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
@@ -1005,6 +1007,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/integrations": null,
+  "/settings/linear-autopilot": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",

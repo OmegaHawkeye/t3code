@@ -121,6 +121,12 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as LinearAutopilotClient from "./linear/LinearAutopilotClient.ts";
+import * as LinearAutopilotPoll from "./linear/LinearAutopilotPoll.ts";
+import * as LinearAutopilotRun from "./linear/LinearAutopilotRun.ts";
+import * as LinearAutopilotToken from "./linear/LinearAutopilotToken.ts";
+import * as LinearAutopilotWorker from "./linear/LinearAutopilotWorker.ts";
+import * as LinearAutopilotPollState from "./persistence/LinearAutopilotPollState.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
@@ -512,6 +518,20 @@ const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService));
 
+const layerLinearAutopilotWorker = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const worker = yield* LinearAutopilotWorker.LinearAutopilotWorker;
+    yield* worker.start;
+  }),
+).pipe(
+  Layer.provide(LinearAutopilotWorker.layer),
+  Layer.provide(LinearAutopilotPoll.layer),
+  Layer.provide(LinearAutopilotRun.layer),
+  Layer.provide(LinearAutopilotClient.layer),
+  Layer.provide(LinearAutopilotToken.layer),
+  Layer.provide(LinearAutopilotPollState.layer),
+);
+
 const layerProviderInstallationRefresh = Layer.effectDiscard(
   Effect.gen(function* () {
     const antigravity = yield* AntigravityInstallation.AntigravityInstallation;
@@ -548,6 +568,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
+  layerLinearAutopilotWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
