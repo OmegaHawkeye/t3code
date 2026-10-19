@@ -23,6 +23,16 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 const REDACTED_SECRET = "••••••";
 const linearOAuthRedirectUri = () =>
   new URL("/api/linear-autopilot/oauth/callback", resolvePrimaryEnvironmentHttpUrl("/")).toString();
+const linearOAuthAppConfigurationUrl = () => {
+  const url = new URL("https://linear.app/settings/api/applications/new");
+  url.searchParams.set("distribution", "private");
+  url.searchParams.set("developer.name", "Omega Hawkeye");
+  url.searchParams.set("oauth.client_name", "T3 Code Autopilot");
+  url.searchParams.set("oauth.client_uri", "https://github.com/OmegaHawkeye/t3code");
+  url.searchParams.set("oauth.redirect_uris", linearOAuthRedirectUri());
+  url.searchParams.set("oauth.grant_types", "authorization_code");
+  return url.toString();
+};
 
 async function fetchAutopilotCatalog(credentialsConfigured: boolean) {
   if (!credentialsConfigured) {
@@ -238,32 +248,42 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           description={
             settings.clientId === REDACTED_SECRET
               ? "OAuth app identifier stored on this server. Leave blank to keep it."
-              : "Required once for this server. Get it from the Linear OAuth app registration."
+              : "Required once for this server. Create a Linear OAuth app with the prefilled settings link."
           }
           control={
-            <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:w-72">
-              <Input
-                type="text"
-                autoComplete="off"
-                value={clientId}
-                placeholder={settings.clientId === REDACTED_SECRET ? "Configured" : "Client ID"}
-                disabled={!writeAllowed}
-                onChange={(event) => {
-                  setClientId(event.target.value);
-                  setClearClientId(false);
-                }}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!writeAllowed || settings.clientId !== REDACTED_SECRET}
-                onClick={() => {
-                  setClearClientId(true);
-                  setClientId("");
-                }}
+            <div className="flex w-full flex-col gap-2 @min-[32rem]/settings-row:w-72">
+              <div className="flex w-full items-center gap-2">
+                <Input
+                  type="text"
+                  autoComplete="off"
+                  value={clientId}
+                  placeholder={settings.clientId === REDACTED_SECRET ? "Configured" : "Client ID"}
+                  disabled={!writeAllowed}
+                  onChange={(event) => {
+                    setClientId(event.target.value);
+                    setClearClientId(false);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!writeAllowed || settings.clientId !== REDACTED_SECRET}
+                  onClick={() => {
+                    setClearClientId(true);
+                    setClientId("");
+                  }}
+                >
+                  Clear
+                </Button>
+              </div>
+              <a
+                className="text-sm text-primary underline underline-offset-4"
+                href={linearOAuthAppConfigurationUrl()}
+                target="_blank"
+                rel="noreferrer"
               >
-                Clear
-              </Button>
+                Open prefilled Linear OAuth app setup
+              </a>
             </div>
           }
         />
