@@ -54,7 +54,7 @@ const BeginAttemptRequest = Schema.Struct({
 
 const ResultRequest = Schema.Struct({
   attemptId: Schema.String,
-  expectedStatus: Schema.Literals(["running", "unknown"]),
+  expectedStatus: Schema.Literals(["pending", "running", "unknown"]),
   status: Schema.Literals(["succeeded", "failed", "unknown"]),
   finishedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   threadId: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(255)))),
