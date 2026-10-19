@@ -10,11 +10,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
+import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPhaseAttempts.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as LinearAutopilotPhaseLaunch from "./LinearAutopilotPhaseLaunch.ts";
@@ -44,9 +47,12 @@ const project = {
 
 const harness = (projectDefaultModelSelection: ModelSelection | null = modelSelection) => {
   const launches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotReadOnlyLaunchInput> = [];
+  const implementationLaunches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotImplementationLaunchInput> =
+    [];
   const dependencies = Layer.mergeAll(
     LinearAutopilotIntake.layer,
     LinearAutopilotRuns.layer,
+    LinearAutopilotPhaseAttempts.layer,
     ServerSettings.ServerSettingsService.layerTest(),
     Layer.mock(ProjectService.ProjectService)({
       getById: () =>
@@ -64,14 +70,132 @@ const harness = (projectDefaultModelSelection: ModelSelection | null = modelSele
           launches.push(input);
           return { attemptId: "attempt-1", commandId: "command-1", threadId: "thread-1" };
         }),
+      launchImplementation: (input) =>
+        Effect.sync(() => {
+          implementationLaunches.push(input);
+          return {
+            attemptId: "implementation-attempt",
+            commandId: "implementation-command",
+            threadId: "implementation-thread",
+          };
+        }),
     }),
   ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory), Layer.provideMerge(NodeServices.layer));
 
   return {
     layer: LinearAutopilotDispatcher.layer.pipe(Layer.provideMerge(dependencies)),
     launches,
+    implementationLaunches,
   };
 };
+
+it.effect("dispatches only the exact human-approved plan into an implementation worktree", () => {
+  const setup = harness();
+  return Effect.gen(function* () {
+    const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+    yield* intake.ingest({
+      eventId: null,
+      workspaceId: "workspace-1",
+      issueId: "issue-approved",
+      identifier: "OME-223",
+      title: "Linear autopilot",
+      url: "https://linear.app/ome/issue/OME-223",
+      description: "Implement after approval",
+      projectId,
+      sourceUpdatedAt: DateTime.formatIso(now),
+      observedAt: DateTime.formatIso(now),
+    });
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    const { run } = yield* runs.createOrGetActive({
+      workspaceId: "workspace-1",
+      issueId: "issue-approved",
+      projectId,
+      sourceUpdatedAt: now,
+      snapshotHash: "a".repeat(64),
+      createdAt: now,
+    });
+    const planSummary = "Implementation plan";
+    const digest = yield* (yield* Crypto.Crypto).digest(
+      "SHA-256",
+      new TextEncoder().encode(planSummary),
+    );
+    const planHash = Hex.encode(digest);
+    yield* runs.transition({
+      runId: run.runId,
+      expectedRevision: 0,
+      nextState: "planning",
+      updatedAt: now,
+      baseRef: "main",
+    });
+    yield* runs.transition({
+      runId: run.runId,
+      expectedRevision: 1,
+      nextState: "reviewing",
+      updatedAt: now,
+    });
+    yield* runs.transition({
+      runId: run.runId,
+      expectedRevision: 2,
+      nextState: "needs_approval",
+      updatedAt: now,
+      approvalPlanHash: planHash,
+      approvalPolicyVersion: "human-review-v1",
+      approvalProjectId: projectId,
+      approvalBaseRef: "main",
+    });
+    const phaseAttempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
+    for (const [phase, summary] of [
+      ["planning", planSummary],
+      ["review", "VERDICT: APPROVE\\nLooks good."],
+    ] as const) {
+      const { attempt } = yield* phaseAttempts.begin({
+        runId: run.runId,
+        phase,
+        commandId: `seed-${phase}`,
+        startedAt: now,
+      });
+      yield* phaseAttempts.recordResult({
+        attemptId: attempt.attemptId,
+        expectedStatus: "pending",
+        status: "succeeded",
+        finishedAt: now,
+        summary,
+      });
+    }
+    const runNeedingApproval = yield* runs.getById(run.runId);
+    assert.isNotNull(runNeedingApproval);
+    yield* runs.approve({
+      runId: run.runId,
+      expectedRevision: runNeedingApproval.revision,
+      planHash,
+      policyVersion: "human-review-v1",
+      projectId,
+      baseRef: "main",
+      approvedBy: "operator",
+      approvedAt: now,
+    });
+
+    const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
+    assert.deepStrictEqual(yield* dispatcher.dispatchApproved(10), {
+      candidates: 1,
+      launched: 1,
+      deferred: 0,
+    });
+    assert.equal((yield* runs.getById(run.runId))?.state, "implementing");
+    assert.deepStrictEqual(setup.implementationLaunches, [
+      {
+        runId: run.runId,
+        projectId,
+        baseRef: "main",
+        modelSelection,
+        issueIdentifier: "OME-223",
+        issueTitle: "Linear autopilot",
+        issueDescription: "Implement after approval",
+        approvedPlan: planSummary,
+      },
+    ]);
+  }).pipe(Effect.provide(setup.layer));
+});
 
 it.effect("launches planning once from the durable eligible outbox", () => {
   const setup = harness();

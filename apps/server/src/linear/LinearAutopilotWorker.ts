@@ -56,6 +56,10 @@ const make = Effect.gen(function* () {
                     Effect.tap((result) =>
                       Effect.logInfo("Linear autopilot phase reconciliation completed", result),
                     ),
+                    Effect.flatMap(() => dispatcher.dispatchApproved(20)),
+                    Effect.tap((result) =>
+                      Effect.logInfo("Linear autopilot implementation dispatch completed", result),
+                    ),
                   )
                 : Effect.void,
             ),

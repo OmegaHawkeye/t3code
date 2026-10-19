@@ -69,6 +69,7 @@ const harness = (options: { readonly completePlanning?: boolean } = {}) => {
             threadId: "review-thread",
           };
         }),
+      launchImplementation: () => Effect.die("Unexpected implementation launch"),
     }),
     Layer.mock(LinearAutopilotApproval.LinearAutopilotApproval)({
       requestHumanApproval: (input) =>

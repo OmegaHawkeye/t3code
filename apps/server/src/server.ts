@@ -571,6 +571,7 @@ const layerLinearAutopilotWorker = Layer.effectDiscard(
   Layer.provide(LinearAutopilotWorker.layer),
   Layer.provide(layerLinearAutopilotReconciler),
   Layer.provide(LinearAutopilotDispatcher.layer),
+  Layer.provide(LinearAutopilotPhaseAttempts.layer),
   Layer.provide(LinearAutopilotPoll.layer),
   Layer.provide(LinearAutopilotRun.layer),
   Layer.provide(LinearAutopilotClient.layer),

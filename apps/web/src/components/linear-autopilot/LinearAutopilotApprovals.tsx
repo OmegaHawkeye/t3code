@@ -63,7 +63,7 @@ export function LinearAutopilotApprovals() {
           `${item.identifier}: this approval became stale. Refresh the plan and review first.`,
         );
       } else {
-        setNotice(`${item.identifier}: approval recorded for this exact plan.`);
+        setNotice(`${item.identifier}: implementation queued from this exact approved plan.`);
       }
       await refresh();
     } catch {
@@ -90,8 +90,8 @@ export function LinearAutopilotApprovals() {
       </header>
 
       <p className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-        Approval is recorded against the displayed plan. Automatic implementation dispatch is still
-        being completed.
+        Approval is bound to the displayed plan. The queue worker starts implementation in a fresh
+        worktree with T3&apos;s approval-required runtime controls.
       </p>
 
       {error ? (
