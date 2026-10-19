@@ -27,9 +27,8 @@ export function LinearAutopilotApprovals() {
       setError(
         "Could not load pending Linear approvals. Check the environment connection and try again.",
       );
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -44,9 +43,8 @@ export function LinearAutopilotApprovals() {
             "Could not load pending Linear approvals. Check the environment connection and try again.",
           );
         }
-      } finally {
-        if (active) setLoading(false);
       }
+      if (active) setLoading(false);
     };
     void load();
     return () => {
@@ -88,9 +86,8 @@ export function LinearAutopilotApprovals() {
       setError(
         `Could not record approval for ${item.identifier}. The approval state may have changed.`,
       );
-    } finally {
-      setPendingRunId(null);
     }
+    setPendingRunId(null);
   };
 
   return (
