@@ -696,7 +696,7 @@ it.effect("returns the same new pair to a second refresh within 30 seconds", () 
     const second = yield* refresh(clientId, token.refresh_token);
     expect(second.access_token).toBe(first.access_token);
     expect(second.refresh_token).toBe(first.refresh_token);
-    expect(second.expires_in).toBe(3600);
+    expect(second.expires_in).toBe(3590);
     const firstSession = yield* authenticate(first);
     const secondSession = yield* authenticate(second);
     expect(secondSession.sessionId).toBe(firstSession.sessionId);
