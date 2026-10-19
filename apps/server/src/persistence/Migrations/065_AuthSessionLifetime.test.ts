@@ -20,7 +20,7 @@ const insertSession = (
     )
   `;
 
-layer("064_AuthSessionLifetime", (it) => {
+layer("065_AuthSessionLifetime", (it) => {
   it.effect("adds lifetime columns and classifies existing sessions", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -50,7 +50,7 @@ layer("064_AuthSessionLifetime", (it) => {
         method: "bearer-access-token",
         subject: "mcp-client",
       });
-      yield* runMigrations({ toMigrationInclusive: 64 });
+      yield* runMigrations({ toMigrationInclusive: 65 });
 
       const rows = yield* sql<{
         session_id: string;
