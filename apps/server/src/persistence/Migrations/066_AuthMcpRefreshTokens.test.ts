@@ -8,11 +8,11 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
-layer("065_AuthMcpRefreshTokens", (it) => {
+layer("066_AuthMcpRefreshTokens", (it) => {
   it.effect("creates the refresh token table keyed by token hash", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 65 });
+      yield* runMigrations({ toMigrationInclusive: 66 });
 
       const columns = yield* sql<{
         readonly name: string;

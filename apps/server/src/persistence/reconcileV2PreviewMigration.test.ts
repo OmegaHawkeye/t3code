@@ -43,8 +43,9 @@ describe("V2 preview upgrade", () => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "DropUnusedV1Projections"],
-        [64, "AuthSessionLifetime"],
-        [65, "AuthMcpRefreshTokens"],
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [65, "AuthSessionLifetime"],
+        [66, "AuthMcpRefreshTokens"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -131,8 +132,9 @@ describe("V2 preview upgrade", () => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "DropUnusedV1Projections"],
-        [64, "AuthSessionLifetime"],
-        [65, "AuthMcpRefreshTokens"],
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [65, "AuthSessionLifetime"],
+        [66, "AuthMcpRefreshTokens"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
