@@ -19,7 +19,6 @@ const TOKEN_URL = "https://api.linear.app/oauth/token";
 const REVOKE_URL = "https://api.linear.app/oauth/revoke";
 const AUTHORIZE_URL = "https://linear.app/oauth/authorize";
 const CLIENT_ID_SECRET = "linear-autopilot-client-id";
-const CLIENT_SECRET_SECRET = "linear-autopilot-client-secret";
 const TOKEN_SECRET = "linear-autopilot-oauth-token";
 const OAUTH_SCOPE = "read,write,app:assignable,app:mentionable";
 const CALLBACK_PATH = "/api/linear-autopilot/oauth/callback";
@@ -106,23 +105,16 @@ const make = Effect.gen(function* () {
   const pendingFlows = yield* Ref.make(new Map<string, PendingFlow>());
   const refreshLock = yield* Semaphore.make(1);
 
-  const readCredentials = Effect.all(
-    {
-      clientId: secretStore.get(CLIENT_ID_SECRET),
-      clientSecret: secretStore.get(CLIENT_SECRET_SECRET),
-    },
-    { concurrency: 2 },
-  ).pipe(
+  const readCredentials = secretStore.get(CLIENT_ID_SECRET).pipe(
     Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })),
-    Effect.flatMap(({ clientId, clientSecret }) => {
-      if (Option.isNone(clientId) || Option.isNone(clientSecret)) {
+    Effect.flatMap((clientId) => {
+      if (Option.isNone(clientId)) {
         return Effect.fail(new LinearAutopilotOAuthError({ reason: "credentials-incomplete" }));
       }
       const values = {
         clientId: new TextDecoder().decode(clientId.value).trim(),
-        clientSecret: new TextDecoder().decode(clientSecret.value).trim(),
       };
-      return values.clientId && values.clientSecret
+      return values.clientId
         ? Effect.succeed(values)
         : Effect.fail(new LinearAutopilotOAuthError({ reason: "credentials-incomplete" }));
     }),
@@ -169,12 +161,11 @@ const make = Effect.gen(function* () {
 
   const exchangeCode = (input: { readonly code: string; readonly flow: PendingFlow }) =>
     Effect.gen(function* () {
-      const credentials = yield* readCredentials;
+      yield* readCredentials;
       const response = yield* requestToken(
         HttpClientRequest.post(TOKEN_URL).pipe(
           HttpClientRequest.bodyUrlParams({
             client_id: input.flow.clientId,
-            client_secret: credentials.clientSecret,
             code: input.code,
             code_verifier: input.flow.verifier,
             grant_type: "authorization_code",
@@ -284,7 +275,6 @@ const make = Effect.gen(function* () {
         HttpClientRequest.post(TOKEN_URL).pipe(
           HttpClientRequest.bodyUrlParams({
             client_id: credentials.clientId,
-            client_secret: credentials.clientSecret,
             grant_type: "refresh_token",
             refresh_token: stored.refreshToken,
           }),
@@ -319,13 +309,10 @@ const make = Effect.gen(function* () {
           .execute(
             HttpClientRequest.post(REVOKE_URL).pipe(
               HttpClientRequest.bodyUrlParams({
+                client_id: credentials.value.clientId,
                 token: stored.value.refreshToken,
                 token_type_hint: "refresh_token",
               }),
-              HttpClientRequest.basicAuth(
-                credentials.value.clientId,
-                credentials.value.clientSecret,
-              ),
             ),
           )
           .pipe(Effect.ignore);

@@ -16,7 +16,6 @@ const bytes = (value: string) => new TextEncoder().encode(value);
 it.effect("connects a workspace with PKCE, rotates its token, and disconnects", () => {
   const secrets = new Map<string, Uint8Array>([
     ["linear-autopilot-client-id", bytes("linear-client-id")],
-    ["linear-autopilot-client-secret", bytes("linear-client-secret")],
   ]);
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokenRequest = 0;

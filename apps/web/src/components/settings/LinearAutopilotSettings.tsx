@@ -92,9 +92,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [triggerLabelIds, setTriggerLabelIds] = useState(settings.triggerLabelIds);
   const [projectMappings, setProjectMappings] = useState(settings.projectMappings);
   const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
   const [clearClientId, setClearClientId] = useState(false);
-  const [clearClientSecret, setClearClientSecret] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<LinearAutopilotCatalog | null>(null);
   const [linearConnected, setLinearConnected] = useState(false);
@@ -109,16 +107,15 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     if (result === "failed") return "Linear authorization failed. Please try again.";
     return null;
   });
-  const credentialsConfigured =
-    settings.clientId === REDACTED_SECRET && settings.clientSecret === REDACTED_SECRET;
-  const [loadingCatalog, setLoadingCatalog] = useState(credentialsConfigured);
+  const clientIdConfigured = settings.clientId === REDACTED_SECRET;
+  const [loadingCatalog, setLoadingCatalog] = useState(clientIdConfigured);
 
   const reloadCatalog = () => {
     setCatalog(null);
     setProjects([]);
     setCatalogError(null);
     setLoadingCatalog(true);
-    void fetchAutopilotCatalog(credentialsConfigured).then((result) => {
+    void fetchAutopilotCatalog(clientIdConfigured).then((result) => {
       setCatalog(result.catalog);
       setLinearConnected(result.connected);
       setProjects(result.projects);
@@ -129,7 +126,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
 
   useEffect(() => {
     let cancelled = false;
-    void fetchAutopilotCatalog(credentialsConfigured).then((result) => {
+    void fetchAutopilotCatalog(clientIdConfigured).then((result) => {
       if (cancelled) return;
       setCatalog(result.catalog);
       setLinearConnected(result.connected);
@@ -140,9 +137,13 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     return () => {
       cancelled = true;
     };
-  }, [credentialsConfigured]);
+  }, [clientIdConfigured]);
 
   const connectLinear = async () => {
+    if (!clientIdConfigured) {
+      setCatalogError("Save the Linear OAuth app Client ID above before signing in.");
+      return;
+    }
     setOauthBusy(true);
     setCatalogError(null);
     try {
@@ -158,7 +159,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
       window.location.assign(result.authorizationUrl);
     } catch {
       setCatalogError(
-        "Could not start Linear sign-in. Check the saved OAuth app credentials, then retry.",
+        "Could not start Linear sign-in. Check the saved OAuth app Client ID and server connection, then retry.",
       );
       setOauthBusy(false);
     }
@@ -212,9 +213,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           clientId: clearClientId
             ? ""
             : clientId || (settings.clientId === REDACTED_SECRET ? REDACTED_SECRET : ""),
-          clientSecret: clearClientSecret
-            ? ""
-            : clientSecret || (settings.clientSecret === REDACTED_SECRET ? REDACTED_SECRET : ""),
+          clientSecret: settings.clientSecret,
         },
       });
     } catch {
@@ -235,17 +234,17 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           }
         />
         <SettingsRow
-          title="Linear app client ID"
+          title="Linear OAuth app Client ID"
           description={
             settings.clientId === REDACTED_SECRET
-              ? "Credential is stored on this server. Leave blank to keep it."
-              : "Stored in the server secret store."
+              ? "OAuth app identifier stored on this server. Leave blank to keep it."
+              : "Required once for this server. Get it from the Linear OAuth app registration."
           }
           control={
             <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:w-72">
               <Input
-                type="password"
-                autoComplete="new-password"
+                type="text"
+                autoComplete="off"
                 value={clientId}
                 placeholder={settings.clientId === REDACTED_SECRET ? "Configured" : "Client ID"}
                 disabled={!writeAllowed}
@@ -269,53 +268,19 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           }
         />
         <SettingsRow
-          title="Linear app client secret"
-          description={
-            settings.clientSecret === REDACTED_SECRET
-              ? "Credential is stored on this server. Leave blank to keep it."
-              : "Stored in the server secret store and never sent to an agent."
-          }
-          control={
-            <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:w-72">
-              <Input
-                type="password"
-                autoComplete="new-password"
-                value={clientSecret}
-                placeholder={
-                  settings.clientSecret === REDACTED_SECRET ? "Configured" : "Client secret"
-                }
-                disabled={!writeAllowed}
-                onChange={(event) => {
-                  setClientSecret(event.target.value);
-                  setClearClientSecret(false);
-                }}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!writeAllowed || settings.clientSecret !== REDACTED_SECRET}
-                onClick={() => {
-                  setClearClientSecret(true);
-                  setClientSecret("");
-                }}
-              >
-                Clear
-              </Button>
-            </div>
-          }
-        />
-        <SettingsRow
           title="Linear workspace connection"
           description={
             connected
               ? "Linear is connected for this server."
-              : "Save the OAuth app credentials, then sign in to authorize a Linear workspace."
+              : !writeAllowed
+                ? "This environment needs settings write permission before it can connect Linear."
+                : "Save the OAuth app Client ID once, then authorize a Linear workspace. PKCE does not require a client secret."
           }
           control={
             <Button
               type="button"
               variant={connected ? "outline" : "default"}
-              disabled={!writeAllowed || !credentialsConfigured || oauthBusy || loadingCatalog}
+              disabled={!writeAllowed || oauthBusy}
               onClick={() => void (connected ? disconnectLinear() : connectLinear())}
             >
               {oauthBusy ? "Working…" : connected ? "Disconnect Linear" : "Sign in with Linear"}
@@ -354,7 +319,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           <p className="px-4 text-sm text-muted-foreground" role="status">
             Connecting to Linear…
           </p>
-        ) : !connected && credentialsConfigured ? (
+        ) : !connected && clientIdConfigured ? (
           <p className="px-4 text-sm text-muted-foreground" role="status">
             Sign in with Linear to load teams, statuses, labels, and projects.
           </p>
