@@ -1,6 +1,6 @@
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId, type LinearAutopilotSettings } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -14,6 +14,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 
 const REDACTED_SECRET = "••••••";
 const ProjectMappings = Schema.Record(Schema.String, ProjectId);
+const decodeProjectMappings = Schema.decodeUnknownSync(ProjectMappings);
 
 const parseIds = (value: string) =>
   value
@@ -23,6 +24,10 @@ const parseIds = (value: string) =>
 
 export function LinearAutopilotSettingsPanel() {
   const settings = useScopedSettings((value) => value.linearAutopilot);
+  return <LinearAutopilotSettingsForm key={JSON.stringify(settings)} settings={settings} />;
+}
+
+function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAutopilotSettings }) {
   const updateSettings = useUpdateScopedSettings();
   const writeAllowed = useScopedSettingsWriteAllowed();
   const [mode, setMode] = useState(settings.mode);
@@ -43,24 +48,9 @@ export function LinearAutopilotSettingsPanel() {
   const [clearClientSecret, setClearClientSecret] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setMode(settings.mode);
-    setTeamId(settings.teamId);
-    setReadyStateIds(settings.readyStateIds.join("\n"));
-    setNeedsHumanApprovalStateId(settings.needsHumanApprovalStateId);
-    setBlockedStateId(settings.blockedStateId);
-    setReviewStateId(settings.reviewStateId);
-    setTriggerLabelIds(settings.triggerLabelIds.join("\n"));
-    setProjectMappings(JSON.stringify(settings.projectMappings, null, 2));
-    setClientId("");
-    setClientSecret("");
-    setClearClientId(false);
-    setClearClientSecret(false);
-  }, [settings]);
-
   const save = () => {
     try {
-      const mappings = Schema.decodeUnknownSync(ProjectMappings)(JSON.parse(projectMappings));
+      const mappings = decodeProjectMappings(JSON.parse(projectMappings));
       setError(null);
       updateSettings({
         linearAutopilot: {

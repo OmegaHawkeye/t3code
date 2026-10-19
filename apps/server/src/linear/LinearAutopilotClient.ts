@@ -171,9 +171,9 @@ const make = Effect.gen(function* () {
         });
       }),
       Effect.timeout(REQUEST_TIMEOUT),
-      Effect.catchTag("TimeoutError", () =>
-        Effect.fail(new LinearAutopilotClientError({ reason: "request" })),
-      ),
+      Effect.catchTags({
+        TimeoutError: () => Effect.fail(new LinearAutopilotClientError({ reason: "request" })),
+      }),
       Effect.withSpan("LinearAutopilotClient.listIssues", {
         attributes: { pageSize: PAGE_SIZE },
       }),
@@ -215,9 +215,9 @@ const make = Effect.gen(function* () {
         return Effect.fail(new LinearAutopilotClientError({ reason: "missing-data" }));
       }),
       Effect.timeout(REQUEST_TIMEOUT),
-      Effect.catchTag("TimeoutError", () =>
-        Effect.fail(new LinearAutopilotClientError({ reason: "request" })),
-      ),
+      Effect.catchTags({
+        TimeoutError: () => Effect.fail(new LinearAutopilotClientError({ reason: "request" })),
+      }),
       Effect.withSpan("LinearAutopilotClient.updateIssueState"),
     );
 

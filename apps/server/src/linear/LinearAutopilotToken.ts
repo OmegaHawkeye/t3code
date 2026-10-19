@@ -96,9 +96,9 @@ const make = Effect.gen(function* () {
           ),
           Effect.map((response) => response.access_token),
           Effect.timeout("30 seconds"),
-          Effect.catchTag("TimeoutError", () =>
-            Effect.fail(new LinearAutopilotTokenError({ reason: "request" })),
-          ),
+          Effect.catchTags({
+            TimeoutError: () => Effect.fail(new LinearAutopilotTokenError({ reason: "request" })),
+          }),
           Effect.withSpan("LinearAutopilotTokenProvider.mint"),
         );
       }),
