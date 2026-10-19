@@ -14,13 +14,17 @@ import {
   toPersistenceSqlError,
 } from "./Errors.ts";
 
-export const LinearAutopilotCandidate = Schema.Struct({
-  eventId: Schema.NullOr(Schema.String.pipe(Schema.maxLength(255))),
+const LinearAutopilotIssueMetadata = Schema.Struct({
   workspaceId: Schema.String.pipe(Schema.maxLength(128)),
   issueId: Schema.String.pipe(Schema.maxLength(128)),
   identifier: Schema.String.pipe(Schema.maxLength(64)),
   title: Schema.String.pipe(Schema.maxLength(500)),
   url: Schema.String.pipe(Schema.maxLength(2048)),
+});
+
+export const LinearAutopilotCandidate = Schema.Struct({
+  ...LinearAutopilotIssueMetadata.fields,
+  eventId: Schema.NullOr(Schema.String.pipe(Schema.maxLength(255))),
   sourceUpdatedAt: Schema.DateTimeUtcFromString,
   observedAt: Schema.DateTimeUtcFromString,
 });
@@ -44,11 +48,7 @@ const snapshotHash = (candidate: {
     .digest("hex");
 
 const CandidateRow = Schema.Struct({
-  workspaceId: Schema.String,
-  issueId: Schema.String,
-  identifier: Schema.String,
-  title: Schema.String,
-  url: Schema.String,
+  ...LinearAutopilotIssueMetadata.fields,
   sourceUpdatedAt: Schema.DateTimeUtcFromString,
   createdAt: Schema.DateTimeUtcFromString,
 });
@@ -57,12 +57,9 @@ const EventId = Schema.Struct({ eventId: Schema.String });
 const PendingOutboxRequest = Schema.Struct({ limit: Schema.Int.pipe(Schema.between(1, 100)) });
 const PendingOutboxRow = Schema.Struct({
   outboxId: Schema.String,
-  workspaceId: Schema.String,
-  issueId: Schema.String,
+  ...LinearAutopilotIssueMetadata.fields,
   sourceUpdatedAt: Schema.DateTimeUtcFromString,
-  identifier: Schema.String,
-  title: Schema.String,
-  url: Schema.String,
+  snapshotHash: Schema.String,
 });
 
 export class LinearAutopilotIntakeRepository extends Context.Service<
@@ -127,20 +124,17 @@ const make = Effect.gen(function* () {
   const insertOutbox = SqlSchema.void({
     Request: Schema.Struct({
       outboxId: Schema.String,
-      workspaceId: Schema.String,
-      issueId: Schema.String,
+      ...LinearAutopilotIssueMetadata.fields,
       sourceUpdatedAt: Schema.DateTimeUtcFromString,
-      identifier: Schema.String,
-      title: Schema.String,
-      url: Schema.String,
+      snapshotHash: Schema.String,
       createdAt: Schema.DateTimeUtcFromString,
     }),
-    execute: ({ outboxId, workspaceId, issueId, sourceUpdatedAt, identifier, title, url, createdAt }) => sql`
+    execute: ({ outboxId, workspaceId, issueId, sourceUpdatedAt, snapshotHash, identifier, title, url, createdAt }) => sql`
       INSERT INTO linear_autopilot_outbox (
-        outbox_id, workspace_id, issue_id, source_updated_at,
+        outbox_id, workspace_id, issue_id, source_updated_at, snapshot_hash,
         identifier, title, url, created_at
       ) VALUES (
-        ${outboxId}, ${workspaceId}, ${issueId}, ${sourceUpdatedAt},
+        ${outboxId}, ${workspaceId}, ${issueId}, ${sourceUpdatedAt}, ${snapshotHash},
         ${identifier}, ${title}, ${url}, ${createdAt}
       )
       ON CONFLICT (outbox_id) DO NOTHING
@@ -156,6 +150,7 @@ const make = Effect.gen(function* () {
         outbox.workspace_id AS "workspaceId",
         outbox.issue_id AS "issueId",
         outbox.source_updated_at AS "sourceUpdatedAt",
+        outbox.snapshot_hash AS "snapshotHash",
         outbox.identifier AS "identifier",
         outbox.title AS "title",
         outbox.url AS "url"
@@ -220,6 +215,7 @@ const make = Effect.gen(function* () {
                 workspaceId: candidate.workspaceId,
                 issueId: candidate.issueId,
                 sourceUpdatedAt: candidate.sourceUpdatedAt,
+                snapshotHash: snapshotHash(candidate),
                 identifier: candidate.identifier,
                 title: candidate.title,
                 url: candidate.url,

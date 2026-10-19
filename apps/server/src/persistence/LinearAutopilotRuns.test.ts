@@ -77,7 +77,7 @@ layer("LinearAutopilotRunRepository", (it) => {
     }),
   );
 
-  it.effect("allows a new generation only after the previous run is terminal", () =>
+  it.effect("does not create a new generation after a terminal run without explicit retry", () =>
     Effect.gen(function* () {
       yield* seedIssue;
       const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
@@ -91,12 +91,112 @@ layer("LinearAutopilotRunRepository", (it) => {
         }),
       );
       const second = yield* runs.createOrGetActive(runInput);
-      assert.isTrue(second.created);
-      assert.equal(second.run.generation, 2);
-      assert.notEqual(second.run.runId, first.run.runId);
-      assert.deepStrictEqual((yield* runs.listRecoverable(10)).map(({ runId }) => runId), [
-        second.run.runId,
-      ]);
+      assert.isFalse(second.created);
+      assert.equal(second.run.generation, 1);
+      assert.equal(second.run.runId, first.run.runId);
+      assert.deepStrictEqual(yield* runs.listRecoverable(10), []);
+    }),
+  );
+
+  it.effect("binds approval to the requested plan and clears it before replanning", () =>
+    Effect.gen(function* () {
+      yield* seedIssue;
+      const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+      const { run } = yield* runs.createOrGetActive(runInput);
+
+      assert.isTrue(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 0,
+          nextState: "planning",
+          updatedAt: now,
+        }),
+      );
+      assert.isTrue(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 1,
+          nextState: "reviewing",
+          updatedAt: now,
+          approvalPlanHash: "plan-hash-1",
+        }),
+      );
+      assert.isFalse(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 2,
+          nextState: "needs_approval",
+          updatedAt: now,
+        }),
+      );
+      assert.isTrue(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 2,
+          nextState: "needs_approval",
+          updatedAt: now,
+          approvalPlanHash: "plan-hash-1",
+          approvalPolicyVersion: "policy-1",
+        }),
+      );
+      assert.isFalse(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 3,
+          nextState: "approved",
+          updatedAt: now,
+        }),
+      );
+      assert.isFalse(
+        yield* runs.approve({
+          runId: run.runId,
+          expectedRevision: 3,
+          planHash: "changed-plan",
+          policyVersion: "policy-1",
+          approvedBy: "operator-1",
+          approvedAt: now,
+        }),
+      );
+      assert.isTrue(
+        yield* runs.approve({
+          runId: run.runId,
+          expectedRevision: 3,
+          planHash: "plan-hash-1",
+          policyVersion: "policy-1",
+          approvedBy: "operator-1",
+          approvedAt: now,
+        }),
+      );
+      assert.isTrue(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 4,
+          nextState: "paused",
+          updatedAt: now,
+        }),
+      );
+      assert.isTrue(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 5,
+          nextState: "queued",
+          updatedAt: now,
+        }),
+      );
+      assert.isTrue(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: 6,
+          nextState: "planning",
+          updatedAt: now,
+        }),
+      );
+
+      const [replanned] = yield* runs.listRecoverable(10);
+      assert.equal(replanned?.approvalPlanHash, null);
+      assert.equal(replanned?.approvalPolicyVersion, null);
+      assert.equal(replanned?.approvedBy, null);
+      assert.equal(replanned?.approvedAt, null);
     }),
   );
 });

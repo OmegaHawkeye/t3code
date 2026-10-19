@@ -31,6 +31,7 @@ export default Effect.gen(function* () {
       workspace_id TEXT NOT NULL,
       issue_id TEXT NOT NULL,
       source_updated_at TEXT NOT NULL,
+      snapshot_hash TEXT NOT NULL,
       identifier TEXT NOT NULL,
       title TEXT NOT NULL,
       url TEXT NOT NULL,

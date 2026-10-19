@@ -41,6 +41,8 @@ export const LinearAutopilotRun = Schema.Struct({
   worktreeId: Schema.NullOr(Schema.String),
   approvalPlanHash: Schema.NullOr(Schema.String),
   approvalPolicyVersion: Schema.NullOr(Schema.String),
+  approvedBy: Schema.NullOr(Schema.String),
+  approvedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
@@ -56,7 +58,6 @@ const NewRun = Schema.Struct({
   snapshotHash: Schema.String,
   createdAt: Schema.DateTimeUtcFromString,
 });
-const Generation = Schema.Struct({ generation: Schema.Int });
 const RecoverableRunsRequest = Schema.Struct({ limit: Schema.Int.pipe(Schema.between(1, 100)) });
 const TransitionRequest = Schema.Struct({
   runId: Schema.String,
@@ -67,6 +68,14 @@ const TransitionRequest = Schema.Struct({
   worktreeId: Schema.optional(Schema.NullOr(Schema.String)),
   approvalPlanHash: Schema.optional(Schema.NullOr(Schema.String)),
   approvalPolicyVersion: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const ApprovalRequest = Schema.Struct({
+  runId: Schema.String,
+  expectedRevision: Schema.Int,
+  planHash: Schema.String.pipe(Schema.maxLength(128)),
+  policyVersion: Schema.String.pipe(Schema.maxLength(128)),
+  approvedBy: Schema.String.pipe(Schema.maxLength(128)),
+  approvedAt: Schema.DateTimeUtcFromString,
 });
 
 const allowedTransitions: Readonly<Record<LinearAutopilotRunState, ReadonlyArray<LinearAutopilotRunState>>> = {
@@ -106,6 +115,11 @@ export class LinearAutopilotRunRepository extends Context.Service<
       boolean,
       PersistenceSqlError
     >;
+    /** Approval is accepted only for the exact plan and policy revision awaiting review. */
+    readonly approve: (input: typeof ApprovalRequest.Type) => Effect.Effect<
+      boolean,
+      PersistenceSqlError
+    >;
   }
 >()("t3/persistence/LinearAutopilotRuns/LinearAutopilotRunRepository") {}
 
@@ -129,6 +143,8 @@ const make = Effect.gen(function* () {
         worktree_id AS "worktreeId",
         approval_plan_hash AS "approvalPlanHash",
         approval_policy_version AS "approvalPolicyVersion",
+        approved_by AS "approvedBy",
+        approved_at AS "approvedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM linear_autopilot_runs
@@ -139,13 +155,31 @@ const make = Effect.gen(function* () {
     `,
   });
 
-  const nextGeneration = SqlSchema.findOne({
+  const findLatest = SqlSchema.findOneOption({
     Request: ActiveRunKey,
-    Result: Generation,
+    Result: LinearAutopilotRun,
     execute: ({ workspaceId, issueId }) => sql`
-      SELECT COALESCE(MAX(generation), 0) + 1 AS "generation"
+      SELECT
+        run_id AS "runId",
+        workspace_id AS "workspaceId",
+        issue_id AS "issueId",
+        generation AS "generation",
+        state AS "state",
+        source_updated_at AS "sourceUpdatedAt",
+        snapshot_hash AS "snapshotHash",
+        revision AS "revision",
+        thread_id AS "threadId",
+        worktree_id AS "worktreeId",
+        approval_plan_hash AS "approvalPlanHash",
+        approval_policy_version AS "approvalPolicyVersion",
+        approved_by AS "approvedBy",
+        approved_at AS "approvedAt",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
       FROM linear_autopilot_runs
       WHERE workspace_id = ${workspaceId} AND issue_id = ${issueId}
+      ORDER BY generation DESC
+      LIMIT 1
     `,
   });
 
@@ -173,6 +207,8 @@ const make = Effect.gen(function* () {
         worktree_id AS "worktreeId",
         approval_plan_hash AS "approvalPlanHash",
         approval_policy_version AS "approvalPolicyVersion",
+        approved_by AS "approvedBy",
+        approved_at AS "approvedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
     `,
@@ -195,6 +231,8 @@ const make = Effect.gen(function* () {
         worktree_id AS "worktreeId",
         approval_plan_hash AS "approvalPlanHash",
         approval_policy_version AS "approvalPolicyVersion",
+        approved_by AS "approvedBy",
+        approved_at AS "approvedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM linear_autopilot_runs
@@ -214,9 +252,36 @@ const make = Effect.gen(function* () {
           updated_at = ${updatedAt},
           thread_id = COALESCE(${threadId ?? null}, thread_id),
           worktree_id = COALESCE(${worktreeId ?? null}, worktree_id),
-          approval_plan_hash = COALESCE(${approvalPlanHash ?? null}, approval_plan_hash),
-          approval_policy_version = COALESCE(${approvalPolicyVersion ?? null}, approval_policy_version)
+          approval_plan_hash = CASE
+            WHEN ${nextState} IN ('queued', 'planning') THEN NULL
+            ELSE COALESCE(${approvalPlanHash ?? null}, approval_plan_hash)
+          END,
+          approval_policy_version = CASE
+            WHEN ${nextState} IN ('queued', 'planning') THEN NULL
+            ELSE COALESCE(${approvalPolicyVersion ?? null}, approval_policy_version)
+          END,
+          approved_by = CASE WHEN ${nextState} IN ('queued', 'planning') THEN NULL ELSE approved_by END,
+          approved_at = CASE WHEN ${nextState} IN ('queued', 'planning') THEN NULL ELSE approved_at END
       WHERE run_id = ${runId} AND revision = ${expectedRevision}
+      RETURNING run_id AS "runId"
+    `,
+  });
+
+  const approveRun = SqlSchema.findAll({
+    Request: ApprovalRequest,
+    Result: Schema.Struct({ runId: Schema.String }),
+    execute: ({ runId, expectedRevision, planHash, policyVersion, approvedBy, approvedAt }) => sql`
+      UPDATE linear_autopilot_runs
+      SET state = 'approved',
+          revision = revision + 1,
+          updated_at = ${approvedAt},
+          approved_by = ${approvedBy},
+          approved_at = ${approvedAt}
+      WHERE run_id = ${runId}
+        AND revision = ${expectedRevision}
+        AND state = 'needs_approval'
+        AND approval_plan_hash = ${planHash}
+        AND approval_policy_version = ${policyVersion}
       RETURNING run_id AS "runId"
     `,
   });
@@ -235,14 +300,17 @@ const make = Effect.gen(function* () {
           );
           if (Option.isSome(current)) return { run: current.value, created: false };
 
-          const { generation } = yield* nextGeneration({
+          const latest = yield* findLatest({
             workspaceId: input.workspaceId,
             issueId: input.issueId,
           }).pipe(
             Effect.mapError(
-              toPersistenceSqlError("LinearAutopilotRuns.nextGeneration:query"),
+              toPersistenceSqlError("LinearAutopilotRuns.findLatest:query"),
             ),
           );
+          if (Option.isSome(latest)) return { run: latest.value, created: false };
+
+          const generation = 1;
           const runId = createHash("sha256")
             .update(JSON.stringify([input.workspaceId, input.issueId, generation]))
             .digest("hex");
@@ -274,7 +342,14 @@ const make = Effect.gen(function* () {
             ),
           );
           const state = current[0]?.state;
-          if (state === undefined || !allowedTransitions[state].includes(input.nextState)) return false;
+          if (
+            state === undefined ||
+            input.nextState === "approved" ||
+            !allowedTransitions[state].includes(input.nextState) ||
+            (input.nextState === "needs_approval" &&
+              (!input.approvalPlanHash || !input.approvalPolicyVersion))
+          )
+            return false;
           const updated = yield* updateRun(input).pipe(
             Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.update:query")),
           );
@@ -287,6 +362,11 @@ const make = Effect.gen(function* () {
               toPersistenceSqlError("LinearAutopilotRuns.transition:transaction")(cause),
             ),
         }),
+      ),
+    approve: (input) =>
+      approveRun(input).pipe(
+        Effect.map((rows) => rows.length > 0),
+        Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.approve:query")),
       ),
   });
 });
