@@ -7,6 +7,7 @@ import {
   longLivedTokenAccessLabel,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  missingTailscaleEndpointDescription,
   selectQrEndpointOption,
   splitClientSessions,
   togglePairingScopeSelection,
@@ -303,5 +304,22 @@ describe("canRevokeOtherClients with long-lived tokens", () => {
         { current: false, kind: "oauth-grant" },
       ]),
     ).toBe(true);
+  });
+});
+
+describe("missingTailscaleEndpointDescription", () => {
+  it("explains that detection waits for Network access when the probe was skipped", () => {
+    expect(
+      missingTailscaleEndpointDescription({ mode: "local-only", tailscaleServeEnabled: false }),
+    ).toBe("Turn on Network access to detect Tailscale.");
+  });
+
+  it.each([
+    { mode: "network-accessible", tailscaleServeEnabled: false },
+    { mode: "local-only", tailscaleServeEnabled: true },
+  ] as const)("asks to start Tailscale when it was probed and not found (%o)", (state) => {
+    expect(missingTailscaleEndpointDescription(state)).toBe(
+      "Start Tailscale to set up HTTPS access through MagicDNS.",
+    );
   });
 });

@@ -5,6 +5,14 @@ import * as Exit from "effect/Exit";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
+import Migration065 from "./Migrations/065_AuthSessionLifetime.ts";
+import Migration066 from "./Migrations/066_AuthMcpRefreshTokens.ts";
+import Migration067 from "./Migrations/067_LinearAutopilotIntake.ts";
+import Migration068 from "./Migrations/068_LinearAutopilotRuns.ts";
+import Migration069 from "./Migrations/069_LinearAutopilotPollState.ts";
+import Migration070 from "./Migrations/070_LinearAutopilotPhaseAttempts.ts";
+import Migration071 from "./Migrations/071_LinearAutopilotIssueContext.ts";
+import Migration072 from "./Migrations/072_LinearAutopilotRunBaseRef.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -80,6 +88,30 @@ describe("runMigrations", () => {
       assert.deepStrictEqual(yield* runMigrations(), v2Migrations);
       assert.deepStrictEqual(yield* history, migrationManifest);
       assert.isAbove(yield* v2TableCount, 0);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("reconciles pre-OME-223 migration IDs without rerunning their schema changes", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 63 });
+      const legacyMigrations = [
+        [64, "AuthSessionLifetime", Migration065],
+        [65, "AuthMcpRefreshTokens", Migration066],
+        [66, "LinearAutopilotIntake", Migration067],
+        [67, "LinearAutopilotRuns", Migration068],
+        [68, "LinearAutopilotPollState", Migration069],
+        [69, "LinearAutopilotPhaseAttempts", Migration070],
+        [70, "LinearAutopilotIssueContext", Migration071],
+        [71, "LinearAutopilotRunBaseRef", Migration072],
+      ] as const;
+      for (const [id, name, migration] of legacyMigrations) {
+        yield* migration;
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
+      }
+
+      assert.deepStrictEqual(yield* runMigrations(), [[64, "CanonicalizeThreadPullRequestLinks"]]);
+      assert.deepStrictEqual(yield* history, migrationManifest);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

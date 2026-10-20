@@ -13,7 +13,7 @@ layer("055_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 71 }, (_, index) => index + 1),
+        Array.from({ length: 72 }, (_, index) => index + 1),
       );
     }),
   );
@@ -35,14 +35,15 @@ layer("055_OrchestrationV2", (it) => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "DropUnusedV1Projections"],
-        [64, "AuthSessionLifetime"],
-        [65, "AuthMcpRefreshTokens"],
-        [66, "LinearAutopilotIntake"],
-        [67, "LinearAutopilotRuns"],
-        [68, "LinearAutopilotPollState"],
-        [69, "LinearAutopilotPhaseAttempts"],
-        [70, "LinearAutopilotIssueContext"],
-        [71, "LinearAutopilotRunBaseRef"],
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [65, "AuthSessionLifetime"],
+        [66, "AuthMcpRefreshTokens"],
+        [67, "LinearAutopilotIntake"],
+        [68, "LinearAutopilotRuns"],
+        [69, "LinearAutopilotPollState"],
+        [70, "LinearAutopilotPhaseAttempts"],
+        [71, "LinearAutopilotIssueContext"],
+        [72, "LinearAutopilotRunBaseRef"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -72,14 +73,15 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 61, name: "PullRequestReviewGuides" },
         { migration_id: 62, name: "ThreadFailureLookupIndex" },
         { migration_id: 63, name: "DropUnusedV1Projections" },
-        { migration_id: 64, name: "AuthSessionLifetime" },
-        { migration_id: 65, name: "AuthMcpRefreshTokens" },
-        { migration_id: 66, name: "LinearAutopilotIntake" },
-        { migration_id: 67, name: "LinearAutopilotRuns" },
-        { migration_id: 68, name: "LinearAutopilotPollState" },
-        { migration_id: 69, name: "LinearAutopilotPhaseAttempts" },
-        { migration_id: 70, name: "LinearAutopilotIssueContext" },
-        { migration_id: 71, name: "LinearAutopilotRunBaseRef" },
+        { migration_id: 64, name: "CanonicalizeThreadPullRequestLinks" },
+        { migration_id: 65, name: "AuthSessionLifetime" },
+        { migration_id: 66, name: "AuthMcpRefreshTokens" },
+        { migration_id: 67, name: "LinearAutopilotIntake" },
+        { migration_id: 68, name: "LinearAutopilotRuns" },
+        { migration_id: 69, name: "LinearAutopilotPollState" },
+        { migration_id: 70, name: "LinearAutopilotPhaseAttempts" },
+        { migration_id: 71, name: "LinearAutopilotIssueContext" },
+        { migration_id: 72, name: "LinearAutopilotRunBaseRef" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

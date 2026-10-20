@@ -90,6 +90,17 @@ We are very very early in this project. Expect bugs.
 
 We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
 
+## OmegaHawkeye fork roadmap
+
+This fork is being extended to bring the most important parts of the [Larl](https://github.com/OmegaHawkeye/local-linear-agent-runner) ticket automation into the T3 Code server. These are fork-specific changes and are not part of upstream T3 Code. The work is staged so the server can own intake, workflow state, approvals, and recovery while T3 Code provides agent execution, worktrees, and the operator interface.
+
+- **Long-lived authentication (OME-222):** completed on this fork. Server sessions and setup tokens support durable service connections with configurable idle periods.
+- **Linear intake and autopilot (OME-223):** in progress. The planned workflow discovers and deduplicates eligible issues, plans and reviews changes, pauses for approval, implements in an isolated worktree, checks evidence, and links delivered pull requests back to Linear. Intake is being introduced in shadow mode before dispatch is enabled.
+- **GitHub Issues and Slack (OME-224):** planned after the shared intake and workflow core. Both sources will feed the same pipeline, with source-specific authentication, routing, and status updates.
+- **Remaining Larl capabilities (OME-225):** planned after the core pipeline. This includes evaluating per-ticket cost tracking, local pull-request review gates, workflow/persona settings, provider routing, and migration of repository mappings, policies, schedules, and run history. The goal is to retire the separate Larl Control App, Coordinator, and bridge once their required capabilities have safe equivalents in the fork.
+
+The workflow will keep repository selection bound to T3's trusted project catalog, preserve approval and protected-branch safeguards, and leave pull requests open for normal review. It will not merge changes or mark tickets Done automatically. See the [OME-221 migration project](https://linear.app/omegahawkeye/issue/OME-221/migrate-larl-into-the-t3-code-fork-omegahawkeyet3code) for scope and progress.
+
 ## Documentation
 
 Full docs live in [docs/](./docs). There's no docs site yet.
