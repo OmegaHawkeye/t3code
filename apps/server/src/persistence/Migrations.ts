@@ -2,6 +2,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
+import { reconcileLinearAutopilotMigration } from "./reconcileLinearAutopilotMigration.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
@@ -69,6 +70,12 @@ import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
 import Migration0064 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
 import Migration0065 from "./Migrations/065_AuthSessionLifetime.ts";
 import Migration0066 from "./Migrations/066_AuthMcpRefreshTokens.ts";
+import Migration0067 from "./Migrations/067_LinearAutopilotIntake.ts";
+import Migration0068 from "./Migrations/068_LinearAutopilotRuns.ts";
+import Migration0069 from "./Migrations/069_LinearAutopilotPollState.ts";
+import Migration0070 from "./Migrations/070_LinearAutopilotPhaseAttempts.ts";
+import Migration0071 from "./Migrations/071_LinearAutopilotIssueContext.ts";
+import Migration0072 from "./Migrations/072_LinearAutopilotRunBaseRef.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -135,9 +142,15 @@ export const migrationEntries = [
   [61, "PullRequestReviewGuides", Migration0061],
   [62, "ThreadFailureLookupIndex", Migration0062],
   [63, "DropUnusedV1Projections", Migration0063],
-    [64, "CanonicalizeThreadPullRequestLinks", Migration0064],
-    [65, "AuthSessionLifetime", Migration0065],
-    [66, "AuthMcpRefreshTokens", Migration0066],
+  [64, "CanonicalizeThreadPullRequestLinks", Migration0064],
+  [65, "AuthSessionLifetime", Migration0065],
+  [66, "AuthMcpRefreshTokens", Migration0066],
+  [67, "LinearAutopilotIntake", Migration0067],
+  [68, "LinearAutopilotRuns", Migration0068],
+  [69, "LinearAutopilotPollState", Migration0069],
+  [70, "LinearAutopilotPhaseAttempts", Migration0070],
+  [71, "LinearAutopilotIssueContext", Migration0071],
+  [72, "LinearAutopilotRunBaseRef", Migration0072],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -203,11 +216,13 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+  const legacyLinearMigrations = includesV2 ? yield* reconcileLinearAutopilotMigration() : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
   const executedMigrations = [
     ...previewMigrations,
+    ...legacyLinearMigrations,
     ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
   ];
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);

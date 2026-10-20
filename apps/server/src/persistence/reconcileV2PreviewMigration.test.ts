@@ -46,6 +46,12 @@ describe("V2 preview upgrade", () => {
         [64, "CanonicalizeThreadPullRequestLinks"],
         [65, "AuthSessionLifetime"],
         [66, "AuthMcpRefreshTokens"],
+        [67, "LinearAutopilotIntake"],
+        [68, "LinearAutopilotRuns"],
+        [69, "LinearAutopilotPollState"],
+        [70, "LinearAutopilotPhaseAttempts"],
+        [71, "LinearAutopilotIssueContext"],
+        [72, "LinearAutopilotRunBaseRef"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -135,6 +141,12 @@ describe("V2 preview upgrade", () => {
         [64, "CanonicalizeThreadPullRequestLinks"],
         [65, "AuthSessionLifetime"],
         [66, "AuthMcpRefreshTokens"],
+        [67, "LinearAutopilotIntake"],
+        [68, "LinearAutopilotRuns"],
+        [69, "LinearAutopilotPollState"],
+        [70, "LinearAutopilotPhaseAttempts"],
+        [71, "LinearAutopilotIssueContext"],
+        [72, "LinearAutopilotRunBaseRef"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

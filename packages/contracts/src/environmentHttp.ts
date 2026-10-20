@@ -66,6 +66,15 @@ import {
   PullRequestUnavailableError,
 } from "./pullRequest.ts";
 import {
+  LinearAutopilotApproveRequest,
+  LinearAutopilotApproveResult,
+  LinearAutopilotPendingApprovals,
+  LinearAutopilotCatalog,
+  LinearAutopilotOAuthDisconnectResult,
+  LinearAutopilotOAuthStartResult,
+  LinearAutopilotOAuthStatus,
+} from "./linearAutopilot.ts";
+import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
   RelayEnvironmentConfigRequest,
@@ -78,6 +87,12 @@ import {
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
+});
+
+const LinearOAuthStartHeaders = Schema.Struct({
+  authorization: Schema.optionalKey(Schema.String),
+  dpop: Schema.optionalKey(Schema.String),
+  origin: Schema.String,
 });
 
 const OrchestrationProtocolHeaders = Schema.Struct({
@@ -676,6 +691,56 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopilot")
+  .add(
+    HttpApiEndpoint.get("oauthStatus", "/api/linear-autopilot/oauth/status", {
+      headers: OptionalBearerHeaders,
+      success: LinearAutopilotOAuthStatus,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("oauthStart", "/api/linear-autopilot/oauth/start", {
+      headers: LinearOAuthStartHeaders,
+      payload: Schema.Struct({
+        clientId: Schema.optionalKey(
+          Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)),
+        ),
+      }),
+      success: LinearAutopilotOAuthStartResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("oauthDisconnect", "/api/linear-autopilot/oauth/disconnect", {
+      headers: OptionalBearerHeaders,
+      success: LinearAutopilotOAuthDisconnectResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("catalog", "/api/linear-autopilot/catalog", {
+      headers: OptionalBearerHeaders,
+      success: LinearAutopilotCatalog,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("listPendingApprovals", "/api/linear-autopilot/approvals", {
+      headers: OptionalBearerHeaders,
+      success: LinearAutopilotPendingApprovals,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("approve", "/api/linear-autopilot/approvals/approve", {
+      headers: OptionalBearerHeaders,
+      payload: LinearAutopilotApproveRequest,
+      success: LinearAutopilotApproveResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -767,6 +832,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMcpOAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentLinearAutopilotHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}

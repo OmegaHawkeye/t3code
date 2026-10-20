@@ -13,7 +13,7 @@ layer("055_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 66 }, (_, index) => index + 1),
+        Array.from({ length: 72 }, (_, index) => index + 1),
       );
     }),
   );
@@ -38,6 +38,12 @@ layer("055_OrchestrationV2", (it) => {
         [64, "CanonicalizeThreadPullRequestLinks"],
         [65, "AuthSessionLifetime"],
         [66, "AuthMcpRefreshTokens"],
+        [67, "LinearAutopilotIntake"],
+        [68, "LinearAutopilotRuns"],
+        [69, "LinearAutopilotPollState"],
+        [70, "LinearAutopilotPhaseAttempts"],
+        [71, "LinearAutopilotIssueContext"],
+        [72, "LinearAutopilotRunBaseRef"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -70,6 +76,12 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 64, name: "CanonicalizeThreadPullRequestLinks" },
         { migration_id: 65, name: "AuthSessionLifetime" },
         { migration_id: 66, name: "AuthMcpRefreshTokens" },
+        { migration_id: 67, name: "LinearAutopilotIntake" },
+        { migration_id: 68, name: "LinearAutopilotRuns" },
+        { migration_id: 69, name: "LinearAutopilotPollState" },
+        { migration_id: 70, name: "LinearAutopilotPhaseAttempts" },
+        { migration_id: 71, name: "LinearAutopilotIssueContext" },
+        { migration_id: 72, name: "LinearAutopilotRunBaseRef" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

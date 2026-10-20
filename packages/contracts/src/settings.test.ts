@@ -41,6 +41,44 @@ describe("ServerSettings auth idle period", () => {
   });
 });
 
+describe("Linear autopilot settings", () => {
+  it("defaults to disabled with no eligible team, statuses, labels, projects, or credentials", () => {
+    expect(decodeServerSettings({}).linearAutopilot).toEqual({
+      mode: "disabled",
+      teamId: "",
+      readyStateIds: [],
+      needsHumanApprovalStateId: "",
+      blockedStateId: "",
+      reviewStateId: "",
+      triggerLabelIds: [],
+      projectMappings: {},
+      clientId: "",
+      clientSecret: "",
+    });
+  });
+
+  it("validates and round-trips a configured shadow policy", () => {
+    const linearAutopilot = {
+      mode: "shadow",
+      teamId: "team-ome",
+      readyStateIds: ["state-ready"],
+      needsHumanApprovalStateId: "state-human-approval",
+      blockedStateId: "state-blocked",
+      reviewStateId: "state-review",
+      triggerLabelIds: ["label-autopilot"],
+      projectMappings: { "linear-project": ProjectId.make("trusted-project-1") },
+      clientId: "client-id",
+      clientSecret: "client-secret",
+    } as const;
+    expect(decodeServerSettings({ linearAutopilot }).linearAutopilot).toEqual(linearAutopilot);
+    expect(decodeServerSettingsPatch({ linearAutopilot })).toEqual({ linearAutopilot });
+    expect(() => decodeServerSettingsPatch({ linearAutopilot: { mode: "dispatch" } })).toThrow();
+    expect(
+      decodeServerSettingsPatch({ linearAutopilot: { mode: "queue" } }).linearAutopilot?.mode,
+    ).toBe("queue");
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");
