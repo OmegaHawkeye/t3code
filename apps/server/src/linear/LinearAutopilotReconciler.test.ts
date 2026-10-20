@@ -16,6 +16,7 @@ import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
 
 const now = DateTime.makeUnsafe("2026-10-19T11:00:00.000Z");
 const projectId = ProjectId.make("trusted-project-1");
@@ -46,6 +47,10 @@ const harness = (
     LinearAutopilotIntake.layer,
     LinearAutopilotRuns.layer,
     LinearAutopilotPhaseAttempts.layer,
+    Layer.succeed(
+      TicketSourceFeedback.TicketSourceFeedback,
+      TicketSourceFeedback.TicketSourceFeedback.of({ update: () => Effect.void }),
+    ),
     ServerSettings.ServerSettingsService.layerTest({
       reviewGuideModelSelection: reviewerModel,
       linearAutopilot: {

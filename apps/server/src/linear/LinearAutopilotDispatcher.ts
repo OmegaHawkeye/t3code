@@ -19,6 +19,7 @@ import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as LinearAutopilotPhaseLaunch from "./LinearAutopilotPhaseLaunch.ts";
+import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
 
 export interface LinearAutopilotDispatchResult {
   readonly candidates: number;
@@ -71,6 +72,7 @@ const make = Effect.gen(function* () {
   const phaseLaunch = yield* LinearAutopilotPhaseLaunch.LinearAutopilotPhaseLaunch;
   const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
   const crypto = yield* Crypto.Crypto;
+  const ticketFeedback = yield* TicketSourceFeedback.TicketSourceFeedback;
 
   const dispatchPending: LinearAutopilotDispatcher["Service"]["dispatchPending"] = (limit) =>
     Effect.gen(function* () {
@@ -116,7 +118,8 @@ const make = Effect.gen(function* () {
           continue;
         }
 
-        const { run } = yield* runs.createOrGetActive({
+        const { run, created } = yield* runs.createOrGetActive({
+          source: candidate.source,
           workspaceId: candidate.workspaceId,
           issueId: candidate.issueId,
           projectId: candidate.projectId,
@@ -124,6 +127,14 @@ const make = Effect.gen(function* () {
           snapshotHash: candidate.snapshotHash,
           createdAt: yield* DateTime.now,
         });
+        if (created && run.source !== "linear") {
+          yield* ticketFeedback.update({
+            source: run.source,
+            workspaceId: run.workspaceId,
+            issueId: run.issueId,
+            status: "progress",
+          });
+        }
 
         if (run.state === "queued") {
           yield* runs.transition({

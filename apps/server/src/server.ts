@@ -135,6 +135,9 @@ import * as LinearAutopilotPoll from "./linear/LinearAutopilotPoll.ts";
 import * as LinearAutopilotRun from "./linear/LinearAutopilotRun.ts";
 import * as LinearAutopilotToken from "./linear/LinearAutopilotToken.ts";
 import * as LinearAutopilotWorker from "./linear/LinearAutopilotWorker.ts";
+import * as TicketSourceWebhookRoute from "./autopilot/TicketSourceWebhookRoute.ts";
+import * as TicketSourceFeedback from "./autopilot/TicketSourceFeedback.ts";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as LinearAutopilotIntake from "./persistence/LinearAutopilotIntake.ts";
 import * as LinearAutopilotPhaseAttempts from "./persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotRuns from "./persistence/LinearAutopilotRuns.ts";
@@ -551,14 +554,23 @@ const layerLinearAutopilotHttpRoutes = Layer.mergeAll(
   LinearAutopilotOAuthCallback.layer,
 ).pipe(Layer.provideMerge(layerLinearAutopilotRun));
 
+const layerTicketSourceFeedback = TicketSourceFeedback.layer.pipe(
+  Layer.provideMerge(GitHubRest.layerWithDependencies),
+  Layer.provideMerge(layerServerSettings),
+  Layer.provideMerge(FetchHttpClient.layer),
+);
+
 const layerLinearAutopilotApproval = LinearAutopilotApproval.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(LinearAutopilotRuns.layer, layerLinearAutopilotRun)),
+  Layer.provideMerge(
+    Layer.mergeAll(LinearAutopilotRuns.layer, layerLinearAutopilotRun, layerTicketSourceFeedback),
+  ),
 );
 
 const layerLinearAutopilotOperator = LinearAutopilotOperator.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       LinearAutopilotIntake.layer,
+      layerTicketSourceFeedback,
       LinearAutopilotRuns.layer,
       LinearAutopilotPhaseAttempts.layer,
       layerLinearAutopilotApproval,
@@ -572,6 +584,7 @@ const layerLinearAutopilotReconciler = LinearAutopilotReconciler.layer.pipe(
       LinearAutopilotRuns.layer,
       LinearAutopilotPhaseAttempts.layer,
       LinearAutopilotIntake.layer,
+      layerTicketSourceFeedback,
       layerLinearAutopilotApproval,
     ),
   ),
@@ -587,6 +600,7 @@ const layerLinearAutopilotWorker = Layer.effectDiscard(
   Layer.provide(LinearAutopilotWorker.layer),
   Layer.provide(layerLinearAutopilotReconciler),
   Layer.provide(LinearAutopilotDispatcher.layer),
+  Layer.provide(layerTicketSourceFeedback),
   Layer.provide(LinearAutopilotPhaseAttempts.layer),
   Layer.provide(LinearAutopilotPoll.layer),
   Layer.provide(layerLinearAutopilotRun),
@@ -769,6 +783,13 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(layerLinearAutopilotHttpRoutes),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
+      Layer.provide(
+        TicketSourceWebhookRoute.layer.pipe(
+          Layer.provide(LinearAutopilotIntake.layer),
+          Layer.provide(layerServerSettings),
+          Layer.provide(FetchHttpClient.layer),
+        ),
+      ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,

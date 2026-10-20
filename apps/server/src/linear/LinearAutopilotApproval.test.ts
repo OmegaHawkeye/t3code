@@ -10,6 +10,7 @@ import * as LinearAutopilotApproval from "./LinearAutopilotApproval.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
 
 const now = DateTime.makeUnsafe("2026-10-19T11:00:00.000Z");
 
@@ -18,6 +19,10 @@ const harness = () => {
   const dependencies = Layer.mergeAll(
     LinearAutopilotIntake.layer,
     LinearAutopilotRuns.layer,
+    Layer.succeed(
+      TicketSourceFeedback.TicketSourceFeedback,
+      TicketSourceFeedback.TicketSourceFeedback.of({ update: () => Effect.void }),
+    ),
     Layer.succeed(
       LinearAutopilotRun.LinearAutopilotRun,
       LinearAutopilotRun.LinearAutopilotRun.of({
