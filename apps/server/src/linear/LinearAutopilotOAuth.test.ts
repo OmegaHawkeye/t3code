@@ -11,8 +11,6 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as LinearAutopilotOAuth from "./LinearAutopilotOAuth.ts";
 
-const bytes = (value: string) => new TextEncoder().encode(value);
-
 it.effect("connects a workspace with PKCE, rotates its token, and disconnects", () => {
   const secrets = new Map<string, Uint8Array>();
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];

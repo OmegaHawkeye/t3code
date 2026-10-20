@@ -12,7 +12,7 @@ export interface AutopilotIntegrationDefinition<Destination extends string = str
   readonly destination?: Destination;
 }
 
-export const AUTOPILOT_INTEGRATIONS = [
+const AUTOPILOT_INTEGRATIONS = [
   {
     id: "linear",
     name: "Linear",

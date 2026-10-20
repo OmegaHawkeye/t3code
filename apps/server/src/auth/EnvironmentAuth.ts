@@ -81,7 +81,7 @@ export interface IssuedBearerSession {
 const MCP_CLIENT_SUBJECT = "mcp-client";
 // Short because the grant row, not the access token, carries the long idle lifetime;
 // clients stay signed in by refreshing.
-export const MCP_CLIENT_ACCESS_TOKEN_TTL = Duration.hours(1);
+const MCP_CLIENT_ACCESS_TOKEN_TTL = Duration.hours(1);
 
 export const mcpClientScopes = (
   access: AuthMcpClientAccess,
@@ -98,7 +98,7 @@ export const mcpClientScopes = (
       : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
 // Fixed lifetime, like `claude setup-token`: revoke it to end access sooner.
-export const LONG_LIVED_TOKEN_TTL = Duration.days(360);
+const LONG_LIVED_TOKEN_TTL = Duration.days(360);
 
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;

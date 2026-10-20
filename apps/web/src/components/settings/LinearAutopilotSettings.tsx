@@ -158,7 +158,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     return () => {
       cancelled = true;
     };
-  }, [clientIdConfigured]);
+  }, []);
 
   const connectLinear = async () => {
     const unsavedClientId = clientId.trim();

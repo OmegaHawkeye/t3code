@@ -19,44 +19,57 @@ const LEGACY_MIGRATIONS = [
 export const reconcileLinearAutopilotMigration = Effect.fn("reconcileLinearAutopilotMigration")(
   function* () {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql.withTransaction(
-      Effect.gen(function* () {
-        const tables = yield* sql`
+    return yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const tables = yield* sql`
         SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
       `;
-        if (tables.length === 0) return [];
+          if (tables.length === 0) return [];
 
-        const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+          const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
         SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 64
         ORDER BY migration_id
       `;
-        if (history[0]?.migration_id !== 64 || history[0].name !== LEGACY_MIGRATIONS[0]) return [];
+          if (history[0]?.migration_id !== 64 || history[0].name !== LEGACY_MIGRATIONS[0])
+            return [];
 
-        const valid = history.every(
-          (row, index) => row.migration_id === 64 + index && row.name === LEGACY_MIGRATIONS[index],
-        );
-        if (!valid) {
-          return yield* new Migrator.MigrationError({
-            kind: "BadState",
-            message:
-              "Cannot reconcile the pre-OME-223 migration history because its later entries do not match this build.",
-          });
-        }
+          const valid = history.every(
+            (row, index) =>
+              row.migration_id === 64 + index && row.name === LEGACY_MIGRATIONS[index],
+          );
+          if (!valid) {
+            return yield* new Migrator.MigrationError({
+              kind: "BadState",
+              message:
+                "Cannot reconcile the pre-OME-223 migration history because its later entries do not match this build.",
+            });
+          }
 
-        for (const row of [...history].reverse()) {
-          yield* sql`
+          for (const row of history.toReversed()) {
+            yield* sql`
           UPDATE effect_sql_migrations
           SET migration_id = ${row.migration_id + 1}
           WHERE migration_id = ${row.migration_id} AND name = ${row.name}
         `;
-        }
-        yield* CanonicalizeThreadPullRequestLinks;
-        yield* sql`
+          }
+          yield* CanonicalizeThreadPullRequestLinks;
+          yield* sql`
         INSERT INTO effect_sql_migrations (migration_id, name)
         VALUES (64, 'CanonicalizeThreadPullRequestLinks')
       `;
-        return [[64, "CanonicalizeThreadPullRequestLinks"]] as const;
-      }),
-    );
+          return [[64, "CanonicalizeThreadPullRequestLinks"]] as const;
+        }),
+      )
+      .pipe(
+        Effect.catchTags({
+          SchemaError: () =>
+            new Migrator.MigrationError({
+              kind: "BadState",
+              message:
+                "Stored data could not be decoded while reconciling OME-223 migration history.",
+            }),
+        }),
+      );
   },
 );

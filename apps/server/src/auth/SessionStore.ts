@@ -525,7 +525,7 @@ function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthCli
 const MCP_CLIENT_SUBJECT = "mcp-client";
 
 /** Mirrors how `authenticateMcpClient` resolves an MCP client's access. */
-export function resolveMcpClientAccess(input: {
+function resolveMcpClientAccess(input: {
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly runtimeModeCeiling: RuntimeMode | null | undefined;
