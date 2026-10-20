@@ -1092,6 +1092,24 @@ export const LinearAutopilotSettings = Schema.Struct({
   ),
   clientId: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
   clientSecret: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
+  githubIssueTriggerLabel: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Keys are exact owner/repository slugs and form the GitHub repository allowlist. */
+  githubIssueProjectMappings: Schema.Record(TrimmedNonEmptyString, ProjectId).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  githubWebhookSecret: TrimmedString.pipe(
+    secretSetting,
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  slackSigningSecret: TrimmedString.pipe(
+    secretSetting,
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  slackBotToken: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
+  slackAllowedChannelIds: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  slackProjectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type LinearAutopilotSettings = typeof LinearAutopilotSettings.Type;
 

@@ -826,6 +826,24 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+const TicketSourceWebhookResponse = Schema.Struct({ accepted: Schema.Boolean });
+class EnvironmentTicketSourceWebhooksHttpApi extends HttpApiGroup.make("ticketSourceWebhooks")
+  .add(
+    HttpApiEndpoint.post("githubIssueWebhook", "/api/autopilot/github/webhook", {
+      success: TicketSourceWebhookResponse,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("slackEventsWebhook", "/api/autopilot/slack/events", {
+      success: TicketSourceWebhookResponse,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("slackCommandsWebhook", "/api/autopilot/slack/commands", {
+      success: TicketSourceWebhookResponse,
+    }),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -835,4 +853,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentLinearAutopilotHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(EnvironmentTicketSourceWebhooksHttpApi) {}

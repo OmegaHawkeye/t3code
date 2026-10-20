@@ -54,6 +54,13 @@ describe("Linear autopilot settings", () => {
       projectMappings: {},
       clientId: "",
       clientSecret: "",
+      githubIssueTriggerLabel: "",
+      githubIssueProjectMappings: {},
+      githubWebhookSecret: "",
+      slackSigningSecret: "",
+      slackBotToken: "",
+      slackAllowedChannelIds: [],
+      slackProjectId: null,
     });
   });
 
@@ -69,6 +76,13 @@ describe("Linear autopilot settings", () => {
       projectMappings: { "linear-project": ProjectId.make("trusted-project-1") },
       clientId: "client-id",
       clientSecret: "client-secret",
+      githubIssueTriggerLabel: "",
+      githubIssueProjectMappings: {},
+      githubWebhookSecret: "",
+      slackSigningSecret: "",
+      slackBotToken: "",
+      slackAllowedChannelIds: [],
+      slackProjectId: null,
     } as const;
     expect(decodeServerSettings({ linearAutopilot }).linearAutopilot).toEqual(linearAutopilot);
     expect(decodeServerSettingsPatch({ linearAutopilot })).toEqual({ linearAutopilot });
