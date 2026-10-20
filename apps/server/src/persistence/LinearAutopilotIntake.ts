@@ -13,9 +13,10 @@ import {
   PersistenceDecodeError,
   toPersistenceSqlError,
 } from "./Errors.ts";
-import { ProjectId } from "@t3tools/contracts";
+import { AutopilotTicket, AutopilotTicketSource, ProjectId } from "@t3tools/contracts";
 
 const LinearAutopilotIssueMetadata = Schema.Struct({
+  source: AutopilotTicketSource.pipe(Schema.withDecodingDefault(Effect.succeed("linear" as const))),
   workspaceId: Schema.String.check(Schema.isMaxLength(128)),
   issueId: Schema.String.check(Schema.isMaxLength(128)),
   identifier: Schema.String.check(Schema.isMaxLength(64)),
@@ -34,6 +35,7 @@ export const LinearAutopilotCandidate = Schema.Struct({
 export type LinearAutopilotCandidate = typeof LinearAutopilotCandidate.Type;
 
 const SnapshotHashInput = Schema.Struct({
+  source: AutopilotTicketSource,
   identifier: Schema.String,
   title: Schema.String,
   url: Schema.String,
@@ -43,21 +45,25 @@ const SnapshotHashInput = Schema.Struct({
 });
 const SnapshotHashCodec = Schema.fromJsonString(Schema.toCodecJson(SnapshotHashInput));
 const OutboxIdCodec = Schema.fromJsonString(
-  Schema.toCodecJson(Schema.Tuple([Schema.String, Schema.String, Schema.String])),
+  Schema.toCodecJson(
+    Schema.Tuple([AutopilotTicketSource, Schema.String, Schema.String, Schema.String]),
+  ),
 );
 
 const snapshotHash = (
   crypto: Crypto.Crypto,
   candidate: {
+    readonly source: AutopilotTicketSource;
     readonly identifier: string;
     readonly title: string;
     readonly url: string;
     readonly description: string;
-    readonly projectId: typeof ProjectId.Type;
+    readonly projectId: ProjectId;
     readonly sourceUpdatedAt: DateTime.Utc | string;
   },
 ): Effect.Effect<string> =>
   Schema.encodeEffect(SnapshotHashCodec)({
+    source: candidate.source,
     identifier: candidate.identifier,
     title: candidate.title,
     url: candidate.url,
@@ -85,8 +91,14 @@ const EventId = Schema.Struct({ eventId: Schema.String });
 const PendingOutboxRequest = Schema.Struct({
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
 });
+const AutopilotTicketIntakePayload = Schema.Struct({
+  ticket: AutopilotTicket,
+  eventId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(255))),
+  observedAt: Schema.DateTimeUtcFromString,
+});
 const PendingOutboxRow = Schema.Struct({
   outboxId: Schema.String,
+  source: AutopilotTicketSource,
   workspaceId: LinearAutopilotIssueMetadata.fields.workspaceId,
   issueId: LinearAutopilotIssueMetadata.fields.issueId,
   identifier: LinearAutopilotIssueMetadata.fields.identifier,
@@ -98,6 +110,7 @@ const PendingOutboxRow = Schema.Struct({
   snapshotHash: Schema.String,
 });
 const IssueContext = Schema.Struct({
+  source: AutopilotTicketSource,
   workspaceId: LinearAutopilotIssueMetadata.fields.workspaceId,
   issueId: LinearAutopilotIssueMetadata.fields.issueId,
   identifier: LinearAutopilotIssueMetadata.fields.identifier,
@@ -114,6 +127,10 @@ export class LinearAutopilotIntakeRepository extends Context.Service<
   {
     /** Records only a new or newer issue revision; duplicate deliveries are acknowledged. */
     readonly ingest: (
+      payload: unknown,
+    ) => Effect.Effect<boolean, PersistenceSqlError | PersistenceDecodeError>;
+    /** Adapts a provider-neutral ticket into the durable intake pipeline. */
+    readonly ingestTicket: (
       payload: unknown,
     ) => Effect.Effect<boolean, PersistenceSqlError | PersistenceDecodeError>;
     readonly listPending: (
@@ -150,6 +167,7 @@ const make = Effect.gen(function* () {
     Request: CandidateRow,
     Result: Schema.Struct({ workspaceId: Schema.String, issueId: Schema.String }),
     execute: ({
+      source,
       workspaceId,
       issueId,
       identifier,
@@ -162,10 +180,10 @@ const make = Effect.gen(function* () {
       createdAt,
     }) => sql`
       INSERT INTO linear_autopilot_issues (
-        workspace_id, issue_id, identifier, title, url, description, t3_project_id,
+        source_kind, workspace_id, issue_id, identifier, title, url, description, t3_project_id,
         source_updated_at, snapshot_hash, created_at
       ) VALUES (
-        ${workspaceId}, ${issueId}, ${identifier}, ${title}, ${url}, ${description}, ${projectId},
+        ${source}, ${workspaceId}, ${issueId}, ${identifier}, ${title}, ${url}, ${description}, ${projectId},
         ${sourceUpdatedAt}, ${snapshotHash},
         ${createdAt}
       )
@@ -192,6 +210,7 @@ const make = Effect.gen(function* () {
     }),
     execute: ({
       outboxId,
+      source,
       workspaceId,
       issueId,
       sourceUpdatedAt,
@@ -204,10 +223,10 @@ const make = Effect.gen(function* () {
       createdAt,
     }) => sql`
       INSERT INTO linear_autopilot_outbox (
-        outbox_id, workspace_id, issue_id, source_updated_at, snapshot_hash,
+        outbox_id, source_kind, workspace_id, issue_id, source_updated_at, snapshot_hash,
         identifier, title, url, description, t3_project_id, created_at
       ) VALUES (
-        ${outboxId}, ${workspaceId}, ${issueId}, ${sourceUpdatedAt}, ${snapshotHash},
+        ${outboxId}, ${source}, ${workspaceId}, ${issueId}, ${sourceUpdatedAt}, ${snapshotHash},
         ${identifier}, ${title}, ${url}, ${description}, ${projectId}, ${createdAt}
       )
       ON CONFLICT (outbox_id) DO NOTHING
@@ -220,6 +239,7 @@ const make = Effect.gen(function* () {
     execute: ({ limit }) => sql`
       SELECT
         outbox.outbox_id AS "outboxId",
+        outbox.source_kind AS "source",
         outbox.workspace_id AS "workspaceId",
         outbox.issue_id AS "issueId",
         outbox.source_updated_at AS "sourceUpdatedAt",
@@ -240,7 +260,7 @@ const make = Effect.gen(function* () {
     Request: Schema.Struct({ workspaceId: Schema.String, issueId: Schema.String }),
     Result: IssueContext,
     execute: ({ workspaceId, issueId }) => sql`
-      SELECT workspace_id AS "workspaceId", issue_id AS "issueId",
+      SELECT source_kind AS "source", workspace_id AS "workspaceId", issue_id AS "issueId",
         identifier, title, url, description, t3_project_id AS "projectId",
         source_updated_at AS "sourceUpdatedAt", snapshot_hash AS "snapshotHash"
       FROM linear_autopilot_issues
@@ -258,7 +278,31 @@ const make = Effect.gen(function* () {
     `,
   });
 
-  return LinearAutopilotIntakeRepository.of({
+  const repository = LinearAutopilotIntakeRepository.of({
+    ingestTicket: (payload) =>
+      Schema.decodeUnknownEffect(AutopilotTicketIntakePayload)(payload).pipe(
+        Effect.mapError((cause) =>
+          PersistenceDecodeError.fromSchemaError("LinearAutopilotIntake.ingestTicket", cause),
+        ),
+        Effect.flatMap(({ ticket, eventId, observedAt }) =>
+          Effect.succeed({
+            source: ticket.source,
+            workspaceId:
+              ticket.source === "linear"
+                ? ticket.sourceAccountId
+                : `${ticket.source}:${ticket.sourceAccountId}`,
+            issueId: ticket.sourceTicketId,
+            identifier: ticket.identifier,
+            title: ticket.title,
+            url: ticket.url,
+            description: ticket.description,
+            projectId: ticket.projectId,
+            sourceUpdatedAt: DateTime.formatIso(ticket.sourceUpdatedAt),
+            eventId,
+            observedAt: DateTime.formatIso(observedAt),
+          }).pipe(Effect.flatMap((candidate) => repository.ingest(candidate))),
+        ),
+      ),
     ingest: (payload) =>
       Schema.decodeUnknownEffect(LinearAutopilotCandidate)(payload).pipe(
         Effect.mapError((cause) =>
@@ -292,6 +336,7 @@ const make = Effect.gen(function* () {
                 if (revision.length === 0) return false;
 
                 const outboxIdPayload = yield* Schema.encodeEffect(OutboxIdCodec)([
+                  candidate.source,
                   candidate.workspaceId,
                   candidate.issueId,
                   DateTime.formatIso(candidate.sourceUpdatedAt),
@@ -303,6 +348,7 @@ const make = Effect.gen(function* () {
                 );
                 yield* insertOutbox({
                   outboxId,
+                  source: candidate.source,
                   workspaceId: candidate.workspaceId,
                   issueId: candidate.issueId,
                   sourceUpdatedAt: candidate.sourceUpdatedAt,
@@ -345,6 +391,7 @@ const make = Effect.gen(function* () {
         Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.markDispatched:query")),
       ),
   });
+  return repository;
 });
 
 export const layer = Layer.effect(LinearAutopilotIntakeRepository, make);

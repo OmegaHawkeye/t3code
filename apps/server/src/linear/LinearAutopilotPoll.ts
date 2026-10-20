@@ -109,16 +109,19 @@ const make = Effect.gen(function* () {
           if (decision.eligible) {
             eligible += 1;
             if (queueEligible) {
-              const inserted = yield* intake.ingest({
+              const inserted = yield* intake.ingestTicket({
+                ticket: {
+                  source: "linear",
+                  sourceAccountId: issue.team.id,
+                  sourceTicketId: issue.id,
+                  identifier: issue.identifier,
+                  title: issue.title,
+                  url: issue.url,
+                  description: issue.description ?? "",
+                  projectId: decision.projectId,
+                  sourceUpdatedAt: DateTime.formatIso(issue.updatedAt),
+                },
                 eventId: null,
-                workspaceId: issue.team.id,
-                issueId: issue.id,
-                identifier: issue.identifier,
-                title: issue.title,
-                url: issue.url,
-                description: issue.description,
-                projectId: decision.projectId,
-                sourceUpdatedAt: DateTime.formatIso(issue.updatedAt),
                 observedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
               });
               if (inserted) queued += 1;

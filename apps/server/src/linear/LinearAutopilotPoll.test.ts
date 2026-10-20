@@ -65,7 +65,8 @@ const harness = (pageFactory: (page: number) => LinearAutopilotClient.LinearAuto
     Layer.succeed(
       LinearAutopilotIntake.LinearAutopilotIntakeRepository,
       LinearAutopilotIntake.LinearAutopilotIntakeRepository.of({
-        ingest: (payload) => Effect.sync(() => queued.push(payload)).pipe(Effect.as(true)),
+        ingestTicket: (payload) => Effect.sync(() => queued.push(payload)).pipe(Effect.as(true)),
+        ingest: () => Effect.succeed(true),
         listPending: () => Effect.succeed([]),
         getIssueContext: () => Effect.succeed(null),
         markDispatched: () => Effect.void,
@@ -136,15 +137,18 @@ it.effect("queues eligible Linear snapshots only in explicit queue mode", () => 
     assert.equal(result.queued, 1);
     assert.equal(setup.read().queued.length, 1);
     assert.deepStrictEqual(setup.read().queued[0], {
+      ticket: {
+        source: "linear",
+        sourceAccountId: "team-ome",
+        sourceTicketId: "issue-1",
+        identifier: "OME-223",
+        title: "Autopilot intake",
+        url: "https://linear.app/ome/issue/OME-223",
+        description: "",
+        projectId: ProjectId.make("trusted-project-1"),
+        sourceUpdatedAt: "2026-10-19T09:30:00.000Z",
+      },
       eventId: null,
-      workspaceId: "team-ome",
-      issueId: "issue-1",
-      identifier: "OME-223",
-      title: "Autopilot intake",
-      url: "https://linear.app/ome/issue/OME-223",
-      description: "",
-      projectId: ProjectId.make("trusted-project-1"),
-      sourceUpdatedAt: "2026-10-19T09:30:00.000Z",
       observedAt: "2026-10-19T10:00:00.000Z",
     });
   }).pipe(Effect.provide(setup.layer));
