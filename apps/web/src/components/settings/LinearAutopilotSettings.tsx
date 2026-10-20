@@ -11,7 +11,9 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Link } from "@tanstack/react-router";
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
+import { resolvePrimaryEnvironmentHttpUrl } from "../../environments/primary/target";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { resolveLinearAutopilotCallbackUri } from "./linearAutopilotCallback.ts";
 import {
   useScopedSettings,
   useScopedSettingsWriteAllowed,
@@ -125,7 +127,14 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [linearConnected, setLinearConnected] = useState(false);
   const [projects, setProjects] = useState<ProjectSnapshot["projects"]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [redirectUri, setRedirectUri] = useState<string | null>(null);
+  const [redirectUri, setRedirectUri] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return resolveLinearAutopilotCallbackUri(resolvePrimaryEnvironmentHttpUrl("/"));
+    } catch {
+      return null;
+    }
+  });
   const [serverClientIdConfigured, setServerClientIdConfigured] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
   const [oauthNotice, setOauthNotice] = useState<string | null>(() => {
