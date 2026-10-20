@@ -96,52 +96,98 @@ it.effect("decodes bounded issue pages for one configured team", () => {
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("lists readable teams with their workflow states, labels, and projects", () => {
-  const requests: Array<HttpClientRequest.HttpClientRequest> = [];
-  const layer = makeLayer(
-    {
-      data: {
-        teams: {
-          nodes: [
-            {
-              id: "team-ome",
-              name: "OME",
-              key: "OME",
-              states: { nodes: [{ id: "state-blocked", name: "Blocked", type: "started" }] },
-              labels: { nodes: [{ id: "label-autopilot", name: "Autopilot" }] },
-              projects: { nodes: [{ id: "linear-project", name: "T3 Code" }] },
-            },
-          ],
-        },
-      },
-    },
-    200,
-    requests,
-  );
-  return Effect.gen(function* () {
-    const client = yield* LinearAutopilotClient.LinearAutopilotClient;
-    const catalog = yield* client.listCatalog({ accessToken: "secret-test-token" });
-
-    assert.deepStrictEqual(catalog.teams[0], {
-      id: "team-ome",
-      name: "OME",
-      key: "OME",
-      states: [{ id: "state-blocked", name: "Blocked", type: "started" }],
-      labels: [{ id: "label-autopilot", name: "Autopilot" }],
-      projects: [{ id: "linear-project", name: "T3 Code" }],
+it.effect(
+  "loads the team directory separately and fetches complete options only for the selected team",
+  () => {
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const states = Array.from({ length: 14 }, (_, index) => ({
+      id: `state-${index}`,
+      name: `State ${index}`,
+      type: "started",
+    }));
+    const labels = Array.from({ length: 14 }, (_, index) => ({
+      id: `label-${index}`,
+      name: `Label ${index}`,
+    }));
+    const projects = Array.from({ length: 14 }, (_, index) => ({
+      id: `project-${index}`,
+      name: `Project ${index}`,
+    }));
+    const httpClient = HttpClient.make((request) => {
+      requests.push(request);
+      const body =
+        requests.length === 1
+          ? {
+              data: {
+                teams: {
+                  nodes: [
+                    { id: "team-ome", name: "OME", key: "OME" },
+                    { id: "team-other", name: "Other", key: "OTH" },
+                  ],
+                },
+              },
+            }
+          : {
+              data: {
+                team: {
+                  id: "team-ome",
+                  states: { nodes: states },
+                  labels: { nodes: labels },
+                  projects: { nodes: projects },
+                },
+              },
+            };
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
     });
-    assert.strictEqual(
-      Option.getOrUndefined(HttpHeaders.get("authorization")(requests[0]!.headers)),
-      "Bearer secret-test-token",
+    const layer = LinearAutopilotClient.layer.pipe(
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, httpClient)),
     );
-    assert.include(
-      requests[0]?.body._tag === "Uint8Array"
-        ? new TextDecoder().decode(requests[0].body.body)
-        : "",
-      "LinearAutopilotSettingsCatalog",
-    );
-  }).pipe(Effect.provide(layer));
-});
+    return Effect.gen(function* () {
+      const client = yield* LinearAutopilotClient.LinearAutopilotClient;
+      const catalog = yield* client.listCatalog({
+        accessToken: "secret-test-token",
+        teamId: "team-ome",
+      });
+
+      assert.deepStrictEqual(catalog.teams[0], {
+        id: "team-ome",
+        name: "OME",
+        key: "OME",
+        states,
+        labels,
+        projects,
+      });
+      assert.deepStrictEqual(catalog.teams[1], {
+        id: "team-other",
+        name: "Other",
+        key: "OTH",
+        states: [],
+        labels: [],
+        projects: [],
+      });
+      assert.strictEqual(requests.length, 2);
+      assert.strictEqual(
+        Option.getOrUndefined(HttpHeaders.get("authorization")(requests[0]!.headers)),
+        "Bearer secret-test-token",
+      );
+      const directoryQuery =
+        requests[0]?.body._tag === "Uint8Array"
+          ? new TextDecoder().decode(requests[0].body.body)
+          : "";
+      const teamQuery =
+        requests[1]?.body._tag === "Uint8Array"
+          ? new TextDecoder().decode(requests[1].body.body)
+          : "";
+      assert.include(directoryQuery, "LinearAutopilotSettingsCatalog");
+      assert.notInclude(directoryQuery, "states(");
+      assert.notInclude(directoryQuery, "labels(");
+      assert.notInclude(directoryQuery, "projects(");
+      assert.include(teamQuery, "LinearAutopilotSelectedTeamCatalog");
+      assert.include(teamQuery, "$teamId: String!");
+      assert.include(teamQuery, '"teamId":"team-ome"');
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("updates the configured issue state without exposing Linear response text", () => {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];

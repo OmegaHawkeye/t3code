@@ -73,6 +73,7 @@ import {
   LinearAutopilotOAuthDisconnectResult,
   LinearAutopilotOAuthStartResult,
   LinearAutopilotOAuthStatus,
+  GitHubAppManifestStartResult,
 } from "./linearAutopilot.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
@@ -719,8 +720,33 @@ class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopil
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("githubAppManifestStart", "/api/autopilot/github/app/start", {
+      headers: LinearOAuthStartHeaders,
+      success: GitHubAppManifestStartResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("slackOAuthStart", "/api/autopilot/slack/oauth/start", {
+      headers: LinearOAuthStartHeaders,
+      payload: Schema.Struct({
+        clientId: Schema.optionalKey(
+          Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)),
+        ),
+        clientSecret: Schema.optionalKey(
+          Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)),
+        ),
+      }),
+      success: LinearAutopilotOAuthStartResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.get("catalog", "/api/linear-autopilot/catalog", {
       headers: OptionalBearerHeaders,
+      query: Schema.Struct({
+        teamId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+      }),
       success: LinearAutopilotCatalog,
       error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),

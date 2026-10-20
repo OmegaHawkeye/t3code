@@ -125,6 +125,10 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as LinearAutopilotClient from "./linear/LinearAutopilotClient.ts";
 import * as LinearAutopilotOAuth from "./linear/LinearAutopilotOAuth.ts";
 import * as LinearAutopilotOAuthCallback from "./linear/LinearAutopilotOAuthCallback.ts";
+import * as GitHubAppManifest from "./autopilot/GitHubAppManifest.ts";
+import * as GitHubAppManifestCallback from "./autopilot/GitHubAppManifestCallback.ts";
+import * as SlackOAuth from "./autopilot/SlackOAuth.ts";
+import * as SlackOAuthCallback from "./autopilot/SlackOAuthCallback.ts";
 import * as LinearAutopilotApproval from "./linear/LinearAutopilotApproval.ts";
 import * as LinearAutopilotDispatcher from "./linear/LinearAutopilotDispatcher.ts";
 import * as LinearAutopilotHttp from "./linear/LinearAutopilotHttp.ts";
@@ -549,9 +553,21 @@ const layerLinearAutopilotRun = LinearAutopilotRun.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(LinearAutopilotClient.layer, layerLinearAutopilotToken)),
 );
 
+const layerGitHubAppManifest = GitHubAppManifest.layer.pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provideMerge(layerServerSettings),
+);
+const layerSlackOAuth = SlackOAuth.layer.pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provideMerge(layerServerSettings),
+);
+const layerAutopilotProviderConnections = Layer.mergeAll(layerGitHubAppManifest, layerSlackOAuth);
+
 const layerLinearAutopilotHttpRoutes = Layer.mergeAll(
   LinearAutopilotHttp.layer,
   LinearAutopilotOAuthCallback.layer,
+  GitHubAppManifestCallback.layer,
+  SlackOAuthCallback.layer,
 ).pipe(Layer.provideMerge(layerLinearAutopilotRun));
 
 const layerTicketSourceFeedback = TicketSourceFeedback.layer.pipe(
@@ -1174,6 +1190,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
       Layer.provide(layerLinearAutopilotOAuth),
+      Layer.provideMerge(layerAutopilotProviderConnections),
     );
   }),
 ).pipe(Layer.provide(ProcessRunner.layer));

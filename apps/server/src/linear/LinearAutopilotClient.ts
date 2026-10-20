@@ -49,34 +49,41 @@ const GraphqlResponse = Schema.Struct({
                 id: Schema.String.check(Schema.isMaxLength(128)),
                 name: Schema.String.check(Schema.isMaxLength(256)),
                 key: Schema.String.check(Schema.isMaxLength(64)),
-                states: Schema.Struct({
-                  nodes: Schema.Array(
-                    Schema.Struct({
-                      id: Schema.String.check(Schema.isMaxLength(128)),
-                      name: Schema.String.check(Schema.isMaxLength(256)),
-                      type: Schema.String.check(Schema.isMaxLength(32)),
-                    }),
-                  ).check(Schema.isMaxLength(100)),
-                }),
-                labels: Schema.Struct({
-                  nodes: Schema.Array(
-                    Schema.Struct({
-                      id: Schema.String.check(Schema.isMaxLength(128)),
-                      name: Schema.String.check(Schema.isMaxLength(256)),
-                    }),
-                  ).check(Schema.isMaxLength(100)),
-                }),
-                projects: Schema.Struct({
-                  nodes: Schema.Array(
-                    Schema.Struct({
-                      id: Schema.String.check(Schema.isMaxLength(128)),
-                      name: Schema.String.check(Schema.isMaxLength(256)),
-                    }),
-                  ).check(Schema.isMaxLength(100)),
-                }),
               }),
             ).check(Schema.isMaxLength(100)),
           }),
+        ),
+        team: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              id: Schema.String.check(Schema.isMaxLength(128)),
+              states: Schema.Struct({
+                nodes: Schema.Array(
+                  Schema.Struct({
+                    id: Schema.String.check(Schema.isMaxLength(128)),
+                    name: Schema.String.check(Schema.isMaxLength(256)),
+                    type: Schema.String.check(Schema.isMaxLength(32)),
+                  }),
+                ).check(Schema.isMaxLength(100)),
+              }),
+              labels: Schema.Struct({
+                nodes: Schema.Array(
+                  Schema.Struct({
+                    id: Schema.String.check(Schema.isMaxLength(128)),
+                    name: Schema.String.check(Schema.isMaxLength(256)),
+                  }),
+                ).check(Schema.isMaxLength(100)),
+              }),
+              projects: Schema.Struct({
+                nodes: Schema.Array(
+                  Schema.Struct({
+                    id: Schema.String.check(Schema.isMaxLength(128)),
+                    name: Schema.String.check(Schema.isMaxLength(256)),
+                  }),
+                ).check(Schema.isMaxLength(100)),
+              }),
+            }),
+          ),
         ),
         issueUpdate: Schema.optional(
           Schema.Struct({
@@ -127,6 +134,7 @@ export class LinearAutopilotClient extends Context.Service<
     }) => Effect.Effect<LinearAutopilotIssuePage, LinearAutopilotClientError>;
     readonly listCatalog: (input: {
       readonly accessToken: string;
+      readonly teamId?: string;
     }) => Effect.Effect<LinearAutopilotCatalog, LinearAutopilotClientError>;
     /** Moves one configured issue to a configured state; callers choose the state ID. */
     readonly updateIssueState: (input: {
@@ -157,12 +165,16 @@ const issueQuery = `query LinearAutopilotIntakeIssues($teamId: ID!, $updatedSinc
 
 const catalogQuery = `query LinearAutopilotSettingsCatalog {
   teams(first: 100) {
-    nodes {
-      id name key
-      states(first: 100) { nodes { id name type } }
-      labels(first: 100) { nodes { id name } }
-      projects(first: 100) { nodes { id name } }
-    }
+    nodes { id name key }
+  }
+}`;
+
+const teamCatalogQuery = `query LinearAutopilotSelectedTeamCatalog($teamId: String!) {
+  team(id: $teamId) {
+    id
+    states(first: 100) { nodes { id name type } }
+    labels(first: 100) { nodes { id name } }
+    projects(first: 100) { nodes { id name } }
   }
 }`;
 
@@ -230,10 +242,10 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const listCatalog: LinearAutopilotClient["Service"]["listCatalog"] = ({ accessToken }) =>
+  const executeGraphql = (accessToken: string, query: string, variables?: object) =>
     HttpClientRequest.post(LINEAR_GRAPHQL_URL).pipe(
       HttpClientRequest.bearerToken(accessToken),
-      HttpClientRequest.bodyJson({ query: catalogQuery }),
+      HttpClientRequest.bodyJson({ query, ...(variables === undefined ? {} : { variables }) }),
       Effect.mapError(() => new LinearAutopilotClientError({ reason: "request" })),
       Effect.flatMap(httpClient.execute),
       Effect.mapError(() => new LinearAutopilotClientError({ reason: "request" })),
@@ -249,34 +261,53 @@ const make = Effect.gen(function* () {
             ),
         }),
       ),
-      Effect.flatMap((response) => {
-        if (response.errors && response.errors.length > 0) {
-          return Effect.fail(
-            new LinearAutopilotClientError({
-              reason: "graphql",
-              errorCount: response.errors.length,
-            }),
-          );
-        }
-        const teams = response.data?.teams?.nodes;
-        if (!teams) return Effect.fail(new LinearAutopilotClientError({ reason: "missing-data" }));
-        return Effect.succeed({
-          teams: teams.map((team) => ({
-            id: team.id,
-            name: team.name,
-            key: team.key,
-            states: team.states.nodes,
-            labels: team.labels.nodes,
-            projects: team.projects.nodes,
-          })),
-        });
-      }),
-      Effect.timeout(REQUEST_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: () => Effect.fail(new LinearAutopilotClientError({ reason: "request" })),
-      }),
-      Effect.withSpan("LinearAutopilotClient.listCatalog"),
     );
+
+  const listCatalog: LinearAutopilotClient["Service"]["listCatalog"] = Effect.fn(
+    "LinearAutopilotClient.listCatalog",
+  )(
+    function* ({ accessToken, teamId }) {
+      const directory = yield* executeGraphql(accessToken, catalogQuery);
+      if (directory.errors && directory.errors.length > 0) {
+        return yield* new LinearAutopilotClientError({
+          reason: "graphql",
+          errorCount: directory.errors.length,
+        });
+      }
+      const teams = directory.data?.teams?.nodes;
+      if (!teams) return yield* new LinearAutopilotClientError({ reason: "missing-data" });
+
+      let selectedTeam:
+        | Exclude<NonNullable<NonNullable<typeof directory.data>["team"]>, null>
+        | undefined;
+      if (teamId && teams.some((team) => team.id === teamId)) {
+        const details = yield* executeGraphql(accessToken, teamCatalogQuery, { teamId });
+        if (details.errors && details.errors.length > 0) {
+          return yield* new LinearAutopilotClientError({
+            reason: "graphql",
+            errorCount: details.errors.length,
+          });
+        }
+        selectedTeam = details.data?.team ?? undefined;
+        if (!selectedTeam) return yield* new LinearAutopilotClientError({ reason: "missing-data" });
+      }
+
+      return {
+        teams: teams.map((team) => ({
+          id: team.id,
+          name: team.name,
+          key: team.key,
+          states: selectedTeam?.id === team.id ? selectedTeam.states.nodes : [],
+          labels: selectedTeam?.id === team.id ? selectedTeam.labels.nodes : [],
+          projects: selectedTeam?.id === team.id ? selectedTeam.projects.nodes : [],
+        })),
+      };
+    },
+    Effect.timeout(REQUEST_TIMEOUT),
+    Effect.catchTags({
+      TimeoutError: () => Effect.fail(new LinearAutopilotClientError({ reason: "request" })),
+    }),
+  );
 
   const updateIssueState: LinearAutopilotClient["Service"]["updateIssueState"] = (input) =>
     HttpClientRequest.post(LINEAR_GRAPHQL_URL).pipe(

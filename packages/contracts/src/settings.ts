@@ -1097,6 +1097,7 @@ export const LinearAutopilotSettings = Schema.Struct({
   githubIssueProjectMappings: Schema.Record(TrimmedNonEmptyString, ProjectId).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  githubAppSlug: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   githubWebhookSecret: TrimmedString.pipe(
     secretSetting,
     Schema.withDecodingDefault(Effect.succeed("")),
@@ -1105,7 +1106,13 @@ export const LinearAutopilotSettings = Schema.Struct({
     secretSetting,
     Schema.withDecodingDefault(Effect.succeed("")),
   ),
+  slackClientId: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
+  slackClientSecret: TrimmedString.pipe(
+    secretSetting,
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
   slackBotToken: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
+  slackWorkspaceName: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   slackAllowedChannelIds: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
