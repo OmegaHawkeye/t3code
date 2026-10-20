@@ -11,9 +11,8 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Link } from "@tanstack/react-router";
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
-import { resolvePrimaryEnvironmentHttpUrl } from "../../environments/primary/target";
 import { runPrimaryHttp } from "../../lib/runtime";
-import { resolveLinearAutopilotCallbackUri } from "./linearAutopilotCallback.ts";
+import { resolveLinearOAuthStart } from "./linearAutopilotCallback.ts";
 import {
   useScopedSettings,
   useScopedSettingsWriteAllowed,
@@ -127,14 +126,8 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [linearConnected, setLinearConnected] = useState(false);
   const [projects, setProjects] = useState<ProjectSnapshot["projects"]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [redirectUri, setRedirectUri] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      return resolveLinearAutopilotCallbackUri(resolvePrimaryEnvironmentHttpUrl("/"));
-    } catch {
-      return null;
-    }
-  });
+  const [redirectUri, setRedirectUri] = useState<string | null>(null);
+  const [oauthStatusLoaded, setOauthStatusLoaded] = useState(false);
   const [serverClientIdConfigured, setServerClientIdConfigured] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
   const [oauthNotice, setOauthNotice] = useState<string | null>(() => {
@@ -154,14 +147,16 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     setProjects([]);
     setCatalogError(null);
     setLoadingCatalog(true);
+    setOauthStatusLoaded(false);
     void fetchAutopilotCatalog().then((result) => {
       setCatalog(result.catalog);
       setLinearConnected(result.connected);
       setProjects(result.projects);
       setCatalogError(result.error);
-      if (result.redirectUri) setRedirectUri(result.redirectUri);
+      setRedirectUri(result.redirectUri ?? null);
       setServerClientIdConfigured(result.clientIdConfigured ?? false);
       setLoadingCatalog(false);
+      setOauthStatusLoaded(true);
     });
   };
 
@@ -173,9 +168,10 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
       setLinearConnected(result.connected);
       setProjects(result.projects);
       setCatalogError(result.error);
-      if (result.redirectUri) setRedirectUri(result.redirectUri);
+      setRedirectUri(result.redirectUri ?? null);
       setServerClientIdConfigured(result.clientIdConfigured ?? false);
       setLoadingCatalog(false);
+      setOauthStatusLoaded(true);
     });
     return () => {
       cancelled = true;
@@ -201,7 +197,16 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           ),
         ),
       );
-      window.location.assign(result.authorizationUrl);
+      const oauthStart = resolveLinearOAuthStart(redirectUri, result);
+      if (oauthStart._tag === "callback-changed") {
+        setRedirectUri(oauthStart.redirectUri);
+        setCatalogError(
+          `The OAuth callback URL changed. Update your Linear app's redirect URI to ${oauthStart.redirectUri}, then try again.`,
+        );
+        setOauthBusy(false);
+        return;
+      }
+      window.location.assign(oauthStart.authorizationUrl);
     } catch {
       setCatalogError(
         "Could not start Linear sign-in. Check the saved OAuth app Client ID and server connection, then retry.",
@@ -329,7 +334,11 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                 target="_blank"
                 rel="noreferrer"
               >
-                {redirectUri ? "Open prefilled Linear OAuth app setup" : "Loading callback URL…"}
+                {redirectUri
+                  ? "Open prefilled Linear OAuth app setup"
+                  : oauthStatusLoaded
+                    ? "Callback URL unavailable; retry connection status"
+                    : "Loading callback URL…"}
               </a>
             </div>
           }
@@ -362,7 +371,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
               aria-label="Linear OAuth callback URL"
               readOnly
               value={redirectUri ?? ""}
-              placeholder="Loading callback URL…"
+              placeholder={oauthStatusLoaded ? "Callback URL unavailable" : "Loading callback URL…"}
               className="w-full @min-[32rem]/settings-row:w-96"
             />
           }

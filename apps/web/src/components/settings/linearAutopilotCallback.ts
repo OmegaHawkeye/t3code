@@ -1,5 +1,15 @@
-export const LINEAR_AUTOPILOT_OAUTH_CALLBACK_PATH = "/api/linear-autopilot/oauth/callback";
+export type LinearOAuthStartResult = {
+  readonly authorizationUrl: string;
+  readonly redirectUri: string;
+};
 
-export function resolveLinearAutopilotCallbackUri(environmentBaseUrl: string): string {
-  return new URL(LINEAR_AUTOPILOT_OAUTH_CALLBACK_PATH, environmentBaseUrl).toString();
+export function resolveLinearOAuthStart(
+  displayedRedirectUri: string | null,
+  result: LinearOAuthStartResult,
+):
+  | { readonly _tag: "navigate"; readonly authorizationUrl: string }
+  | { readonly _tag: "callback-changed"; readonly redirectUri: string } {
+  return displayedRedirectUri === result.redirectUri
+    ? { _tag: "navigate", authorizationUrl: result.authorizationUrl }
+    : { _tag: "callback-changed", redirectUri: result.redirectUri };
 }
