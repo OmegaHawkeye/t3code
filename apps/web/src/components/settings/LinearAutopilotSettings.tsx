@@ -6,12 +6,28 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { useEffect, useState } from "react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { Link } from "@tanstack/react-router";
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { resolveLinearOAuthStart } from "./linearAutopilotCallback.ts";
 import {
   useScopedSettings,
@@ -32,7 +48,7 @@ const linearOAuthAppConfigurationUrl = (redirectUri: string) => {
   return url.toString();
 };
 
-async function fetchAutopilotCatalog() {
+async function fetchAutopilotCatalog(teamId?: string) {
   try {
     const status = await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
@@ -53,7 +69,9 @@ async function fetchAutopilotCatalog() {
     try {
       catalog = await runPrimaryHttp(
         PrimaryEnvironmentHttpClient.pipe(
-          Effect.flatMap((client) => client.linearAutopilot.catalog({ headers: {} })),
+          Effect.flatMap((client) =>
+            client.linearAutopilot.catalog({ headers: {}, query: teamId ? { teamId } : {} }),
+          ),
         ),
       );
     } catch {
@@ -108,6 +126,8 @@ export function LinearAutopilotSettingsPanel() {
 
 function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAutopilotSettings }) {
   const updateSettings = useUpdateScopedSettings();
+  const createNewProject = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const writeAllowed = useScopedSettingsWriteAllowed();
   const [mode, setMode] = useState(settings.mode);
   const [teamId, setTeamId] = useState(settings.teamId);
@@ -119,6 +139,13 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [reviewStateId, setReviewStateId] = useState(settings.reviewStateId);
   const [triggerLabelIds, setTriggerLabelIds] = useState(settings.triggerLabelIds);
   const [projectMappings, setProjectMappings] = useState(settings.projectMappings);
+  const [pendingProjectMapping, setPendingProjectMapping] = useState<{
+    readonly linearProjectId: string;
+    readonly linearProjectName: string;
+  } | null>(null);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [createProjectError, setCreateProjectError] = useState<string | null>(null);
   const [clientId, setClientId] = useState("");
   const [clearClientId, setClearClientId] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -142,13 +169,13 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const clientIdConfigured = savedClientIdConfigured || serverClientIdConfigured;
   const [loadingCatalog, setLoadingCatalog] = useState(savedClientIdConfigured);
 
-  const reloadCatalog = () => {
+  const reloadCatalog = (selectedTeamId = teamId) => {
     setCatalog(null);
     setProjects([]);
     setCatalogError(null);
     setLoadingCatalog(true);
     setOauthStatusLoaded(false);
-    void fetchAutopilotCatalog().then((result) => {
+    void fetchAutopilotCatalog(selectedTeamId || undefined).then((result) => {
       setCatalog(result.catalog);
       setLinearConnected(result.connected);
       setProjects(result.projects);
@@ -162,7 +189,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
 
   useEffect(() => {
     let cancelled = false;
-    void fetchAutopilotCatalog().then((result) => {
+    void fetchAutopilotCatalog(teamId || undefined).then((result) => {
       if (cancelled) return;
       setCatalog(result.catalog);
       setLinearConnected(result.connected);
@@ -176,7 +203,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [teamId]);
 
   const connectLinear = async () => {
     const unsavedClientId = clientId.trim();
@@ -271,6 +298,46 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     } catch {
       setError("Could not save Linear settings. Check the selected values and try again.");
     }
+  };
+
+  const createAndMapProject = async () => {
+    if (!pendingProjectMapping || !primaryEnvironmentId || !newProjectName.trim()) return;
+    setCreatingProject(true);
+    setCreateProjectError(null);
+    const result = await createNewProject({
+      environmentId: primaryEnvironmentId,
+      input: { name: newProjectName.trim() },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const failure = squashAtomCommandFailure(result);
+        setCreateProjectError(
+          failure instanceof Error ? failure.message : "Could not create the T3 project.",
+        );
+      }
+      setCreatingProject(false);
+      return;
+    }
+
+    const createdProjectId = ProjectId.make(result.value.projectId);
+    setProjectMappings((current) => ({
+      ...current,
+      [pendingProjectMapping.linearProjectId]: createdProjectId,
+    }));
+    setPendingProjectMapping(null);
+    setNewProjectName("");
+    try {
+      const snapshot = await runPrimaryHttp(
+        PrimaryEnvironmentHttpClient.pipe(
+          Effect.flatMap((client) => client.projects.snapshot({ headers: {} })),
+        ),
+      );
+      const availableProjects = snapshot.projects.filter((project) => project.deletedAt === null);
+      setProjects(availableProjects);
+    } catch {
+      // The project is already created and mapped by ID; its display name can refresh later.
+    }
+    setCreatingProject(false);
   };
 
   return (
@@ -425,12 +492,15 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
               value={teamId}
               disabled={!writeAllowed || !connected}
               onChange={(event) => {
-                setTeamId(event.target.value);
+                const selectedTeamId = event.target.value;
+                setTeamId(selectedTeamId);
                 setReadyStateIds([]);
                 setTriggerLabelIds([]);
                 setNeedsHumanApprovalStateId("");
                 setBlockedStateId("");
                 setReviewStateId("");
+                setCatalogError(null);
+                setLoadingCatalog(Boolean(selectedTeamId));
               }}
             >
               <option value="">Select a team…</option>
@@ -625,11 +695,13 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           title="Project mappings"
           description="Map each Linear project to a trusted local T3 project. Issue text never selects a repository."
         >
-          <div className="space-y-3">
+          <div className="mt-3 space-y-3">
             {mappingProjectIds.map((linearProjectId) => {
               const linearProject = selectedTeam?.projects.find(
                 (project) => project.id === linearProjectId,
               );
+              const mappedProjectId = projectMappings[linearProjectId];
+              const mappedProject = projects.find((project) => project.id === mappedProjectId);
               return (
                 <label
                   key={linearProjectId}
@@ -639,28 +711,51 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                   <select
                     aria-label={`T3 project for ${linearProject?.name ?? linearProjectId}`}
                     className="h-9 min-w-0 rounded-md border border-input bg-background px-2"
-                    value={projectMappings[linearProjectId] ?? ""}
-                    disabled={!writeAllowed || !connected || !selectedTeam}
-                    onChange={(event) =>
-                      setProjectMappings((current) => {
-                        const next = { ...current };
-                        if (event.target.value)
-                          next[linearProjectId] = ProjectId.make(event.target.value);
-                        else delete next[linearProjectId];
-                        return next;
-                      })
+                    value={mappedProjectId ?? ""}
+                    disabled={
+                      Boolean(mappedProjectId) || !writeAllowed || !connected || !selectedTeam
                     }
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value === "__create_t3_project__" && linearProject) {
+                        setNewProjectName(linearProject.name);
+                        setCreateProjectError(null);
+                        setPendingProjectMapping({
+                          linearProjectId,
+                          linearProjectName: linearProject.name,
+                        });
+                      } else if (value) {
+                        setProjectMappings((current) => ({
+                          ...current,
+                          [linearProjectId]: ProjectId.make(value),
+                        }));
+                      }
+                    }}
                   >
-                    <option value="">Do not map</option>
-                    {projects.map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.title} —{" "}
-                        {project.repositoryIdentity?.displayName ??
-                          (project.repositoryIdentity?.name
-                            ? `${project.repositoryIdentity.owner ? `${project.repositoryIdentity.owner}/` : ""}${project.repositoryIdentity.name}`
-                            : project.workspaceRoot)}
+                    {mappedProjectId ? (
+                      <option value={mappedProjectId}>
+                        {mappedProject?.title ?? mappedProjectId}
+                        {mappedProject
+                          ? ` — ${mappedProject.repositoryIdentity?.displayName ?? mappedProject.workspaceRoot}`
+                          : ""}
                       </option>
-                    ))}
+                    ) : (
+                      <>
+                        <option value="">Do not map</option>
+                        <option value="__create_t3_project__">Create a T3 project…</option>
+                      </>
+                    )}
+                    {projects.map((project) =>
+                      !mappedProjectId ? (
+                        <option key={project.id} value={project.id}>
+                          {project.title} —{" "}
+                          {project.repositoryIdentity?.displayName ??
+                            (project.repositoryIdentity?.name
+                              ? `${project.repositoryIdentity.owner ? `${project.repositoryIdentity.owner}/` : ""}${project.repositoryIdentity.name}`
+                              : project.workspaceRoot)}
+                        </option>
+                      ) : null,
+                    )}
                   </select>
                 </label>
               );
@@ -683,6 +778,58 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           </Button>
         </div>
       </SettingsSection>
+      <Dialog
+        open={pendingProjectMapping !== null}
+        onOpenChange={(open) => {
+          if (!open && !creatingProject) {
+            setPendingProjectMapping(null);
+            setCreateProjectError(null);
+          }
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Create a T3 project</DialogTitle>
+            <DialogDescription>
+              Create a project for Linear project “{pendingProjectMapping?.linearProjectName}” and
+              map it now.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <label className="grid gap-2 text-sm font-medium">
+              T3 project name
+              <Input
+                autoFocus
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                disabled={creatingProject}
+              />
+            </label>
+            {createProjectError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {createProjectError}
+              </p>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={creatingProject}
+              onClick={() => setPendingProjectMapping(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                creatingProject || !primaryEnvironmentId || !writeAllowed || !newProjectName.trim()
+              }
+              onClick={() => void createAndMapProject()}
+            >
+              {creatingProject ? "Creating…" : "Create and map"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
     </SettingsPageContainer>
   );
 }

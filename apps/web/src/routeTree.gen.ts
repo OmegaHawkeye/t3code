@@ -35,7 +35,9 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as SettingsLinearAutopilotSlackRouteImport } from './routes/settings.linear-autopilot.slack'
 import { Route as SettingsLinearAutopilotLinearRouteImport } from './routes/settings.linear-autopilot.linear'
+import { Route as SettingsLinearAutopilotGithubRouteImport } from './routes/settings.linear-autopilot.github'
 import { Route as SettingsLinearAutopilotApprovalsRouteImport } from './routes/settings.linear-autopilot.approvals'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -170,10 +172,22 @@ const ChatNewRoute = ChatNewRouteImport.update({
   path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
+const SettingsLinearAutopilotSlackRoute =
+  SettingsLinearAutopilotSlackRouteImport.update({
+    id: '/slack',
+    path: '/slack',
+    getParentRoute: () => SettingsLinearAutopilotRoute,
+  } as any)
 const SettingsLinearAutopilotLinearRoute =
   SettingsLinearAutopilotLinearRouteImport.update({
     id: '/linear',
     path: '/linear',
+    getParentRoute: () => SettingsLinearAutopilotRoute,
+  } as any)
+const SettingsLinearAutopilotGithubRoute =
+  SettingsLinearAutopilotGithubRouteImport.update({
+    id: '/github',
+    path: '/github',
     getParentRoute: () => SettingsLinearAutopilotRoute,
   } as any)
 const SettingsLinearAutopilotApprovalsRoute =
@@ -223,7 +237,9 @@ export interface FileRoutesByFullPath {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/linear-autopilot/approvals': typeof SettingsLinearAutopilotApprovalsRoute
+  '/settings/linear-autopilot/github': typeof SettingsLinearAutopilotGithubRoute
   '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
+  '/settings/linear-autopilot/slack': typeof SettingsLinearAutopilotSlackRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -254,7 +270,9 @@ export interface FileRoutesByTo {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/linear-autopilot/approvals': typeof SettingsLinearAutopilotApprovalsRoute
+  '/settings/linear-autopilot/github': typeof SettingsLinearAutopilotGithubRoute
   '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
+  '/settings/linear-autopilot/slack': typeof SettingsLinearAutopilotSlackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -287,7 +305,9 @@ export interface FileRoutesById {
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/linear-autopilot/approvals': typeof SettingsLinearAutopilotApprovalsRoute
+  '/settings/linear-autopilot/github': typeof SettingsLinearAutopilotGithubRoute
   '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
+  '/settings/linear-autopilot/slack': typeof SettingsLinearAutopilotSlackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -320,7 +340,9 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/linear-autopilot/approvals'
+    | '/settings/linear-autopilot/github'
     | '/settings/linear-autopilot/linear'
+    | '/settings/linear-autopilot/slack'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -351,7 +373,9 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/linear-autopilot/approvals'
+    | '/settings/linear-autopilot/github'
     | '/settings/linear-autopilot/linear'
+    | '/settings/linear-autopilot/slack'
   id:
     | '__root__'
     | '/_chat'
@@ -383,7 +407,9 @@ export interface FileRouteTypes {
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/settings/linear-autopilot/approvals'
+    | '/settings/linear-autopilot/github'
     | '/settings/linear-autopilot/linear'
+    | '/settings/linear-autopilot/slack'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -581,11 +607,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/settings/linear-autopilot/slack': {
+      id: '/settings/linear-autopilot/slack'
+      path: '/slack'
+      fullPath: '/settings/linear-autopilot/slack'
+      preLoaderRoute: typeof SettingsLinearAutopilotSlackRouteImport
+      parentRoute: typeof SettingsLinearAutopilotRoute
+    }
     '/settings/linear-autopilot/linear': {
       id: '/settings/linear-autopilot/linear'
       path: '/linear'
       fullPath: '/settings/linear-autopilot/linear'
       preLoaderRoute: typeof SettingsLinearAutopilotLinearRouteImport
+      parentRoute: typeof SettingsLinearAutopilotRoute
+    }
+    '/settings/linear-autopilot/github': {
+      id: '/settings/linear-autopilot/github'
+      path: '/github'
+      fullPath: '/settings/linear-autopilot/github'
+      preLoaderRoute: typeof SettingsLinearAutopilotGithubRouteImport
       parentRoute: typeof SettingsLinearAutopilotRoute
     }
     '/settings/linear-autopilot/approvals': {
@@ -632,14 +672,18 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsLinearAutopilotRouteChildren {
   SettingsLinearAutopilotApprovalsRoute: typeof SettingsLinearAutopilotApprovalsRoute
+  SettingsLinearAutopilotGithubRoute: typeof SettingsLinearAutopilotGithubRoute
   SettingsLinearAutopilotLinearRoute: typeof SettingsLinearAutopilotLinearRoute
+  SettingsLinearAutopilotSlackRoute: typeof SettingsLinearAutopilotSlackRoute
 }
 
 const SettingsLinearAutopilotRouteChildren: SettingsLinearAutopilotRouteChildren =
   {
     SettingsLinearAutopilotApprovalsRoute:
       SettingsLinearAutopilotApprovalsRoute,
+    SettingsLinearAutopilotGithubRoute: SettingsLinearAutopilotGithubRoute,
     SettingsLinearAutopilotLinearRoute: SettingsLinearAutopilotLinearRoute,
+    SettingsLinearAutopilotSlackRoute: SettingsLinearAutopilotSlackRoute,
   }
 
 const SettingsLinearAutopilotRouteWithChildren =
