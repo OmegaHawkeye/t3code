@@ -92,6 +92,16 @@ export const layer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* tokenProvider.mint().pipe(
             Effect.flatMap((accessToken) => linearClient.listCatalog({ accessToken })),
+            Effect.catchIf(
+              (error) =>
+                error._tag === "LinearAutopilotClientError" &&
+                error.reason === "http" &&
+                error.status === 401,
+              () =>
+                tokenProvider
+                  .mint({ forceRefresh: true })
+                  .pipe(Effect.flatMap((accessToken) => linearClient.listCatalog({ accessToken }))),
+            ),
             Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
           );
         }),

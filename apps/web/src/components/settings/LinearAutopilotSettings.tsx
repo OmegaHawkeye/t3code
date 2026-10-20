@@ -61,7 +61,8 @@ async function fetchAutopilotCatalog() {
         connected: true,
         catalog: null,
         projects: [],
-        error: "Linear is connected, but its workspace options could not be loaded.",
+        error:
+          "Linear is connected, but its workspace options could not be loaded. Retry; if the problem persists, reconnect Linear.",
         redirectUri: status.redirectUri,
         clientIdConfigured: status.clientIdConfigured,
       };
@@ -345,14 +346,26 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                 : "Save the OAuth app Client ID once, then authorize a Linear workspace. PKCE does not require a client secret."
           }
           control={
-            <Button
-              type="button"
-              variant={connected ? "outline" : "default"}
-              disabled={!writeAllowed || oauthBusy}
-              onClick={() => void (connected ? disconnectLinear() : connectLinear())}
-            >
-              {oauthBusy ? "Working…" : connected ? "Disconnect Linear" : "Sign in with Linear"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {connected && catalogError?.includes("workspace options") ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!writeAllowed || oauthBusy}
+                  onClick={() => void connectLinear()}
+                >
+                  Reconnect Linear
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant={connected ? "outline" : "default"}
+                disabled={!writeAllowed || oauthBusy}
+                onClick={() => void (connected ? disconnectLinear() : connectLinear())}
+              >
+                {oauthBusy ? "Working…" : connected ? "Disconnect Linear" : "Sign in with Linear"}
+              </Button>
+            </div>
           }
         />
         <SettingsRow
