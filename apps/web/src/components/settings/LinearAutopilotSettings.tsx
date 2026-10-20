@@ -203,9 +203,8 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
       setOauthNotice("Linear workspace disconnected.");
     } catch {
       setCatalogError("Could not disconnect Linear. Check the server connection, then retry.");
-    } finally {
-      setOauthBusy(false);
     }
+    setOauthBusy(false);
   };
 
   const selectedTeam = catalog?.teams.find((team) => team.id === teamId);

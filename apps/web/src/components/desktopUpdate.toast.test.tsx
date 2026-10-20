@@ -5,6 +5,8 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 const testState = vi.hoisted(() => ({
   addToast: vi.fn(),
 }));
+const defaultReleaseRepository =
+  import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY || "pingdotgg/t3code";
 
 vi.mock("./ui/toast", () => ({
   toastManager: { add: testState.addToast },
@@ -90,7 +92,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     link?.props.onClick?.();
     await vi.waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
+        `https://github.com/${defaultReleaseRepository}/releases/tag/v0.0.30`,
       );
     });
     expect(testState.addToast).toHaveBeenCalledTimes(1);
@@ -108,7 +110,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
 
     await vi.waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
+        `https://github.com/${defaultReleaseRepository}/releases/tag/v0.0.30`,
       );
     });
   });
