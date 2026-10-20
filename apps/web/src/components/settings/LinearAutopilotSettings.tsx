@@ -49,11 +49,23 @@ async function fetchAutopilotCatalog() {
         clientIdConfigured: status.clientIdConfigured,
       };
     }
-    const catalog = await runPrimaryHttp(
-      PrimaryEnvironmentHttpClient.pipe(
-        Effect.flatMap((client) => client.linearAutopilot.catalog({ headers: {} })),
-      ),
-    );
+    let catalog: LinearAutopilotCatalog;
+    try {
+      catalog = await runPrimaryHttp(
+        PrimaryEnvironmentHttpClient.pipe(
+          Effect.flatMap((client) => client.linearAutopilot.catalog({ headers: {} })),
+        ),
+      );
+    } catch {
+      return {
+        connected: true,
+        catalog: null,
+        projects: [],
+        error: "Linear is connected, but its workspace options could not be loaded.",
+        redirectUri: status.redirectUri,
+        clientIdConfigured: status.clientIdConfigured,
+      };
+    }
     try {
       const projectSnapshot = await runPrimaryHttp(
         PrimaryEnvironmentHttpClient.pipe(
@@ -107,19 +119,6 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [triggerLabelIds, setTriggerLabelIds] = useState(settings.triggerLabelIds);
   const [projectMappings, setProjectMappings] = useState(settings.projectMappings);
   const [clientId, setClientId] = useState("");
-  const [githubIssueTriggerLabel, setGithubIssueTriggerLabel] = useState(
-    settings.githubIssueTriggerLabel,
-  );
-  const [githubIssueProjectMappings, setGithubIssueProjectMappings] = useState(
-    settings.githubIssueProjectMappings,
-  );
-  const [githubWebhookSecret, setGithubWebhookSecret] = useState("");
-  const [slackSigningSecret, setSlackSigningSecret] = useState("");
-  const [slackBotToken, setSlackBotToken] = useState("");
-  const [slackAllowedChannelIds, setSlackAllowedChannelIds] = useState(
-    settings.slackAllowedChannelIds,
-  );
-  const [slackProjectId, setSlackProjectId] = useState(settings.slackProjectId);
   const [clearClientId, setClearClientId] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<LinearAutopilotCatalog | null>(null);
@@ -266,13 +265,6 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                 ? REDACTED_SECRET
                 : ""),
           clientSecret: settings.clientSecret,
-          githubIssueTriggerLabel,
-          githubIssueProjectMappings,
-          githubWebhookSecret: githubWebhookSecret || settings.githubWebhookSecret,
-          slackSigningSecret: slackSigningSecret || settings.slackSigningSecret,
-          slackBotToken: slackBotToken || settings.slackBotToken,
-          slackAllowedChannelIds,
-          slackProjectId,
         },
       });
     } catch {
@@ -665,109 +657,6 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                 No Linear projects are available for this team.
               </p>
             ) : null}
-          </div>
-        </SettingsRow>
-        <SettingsRow
-          title="GitHub Issues"
-          description="Configure a GitHub webhook at /api/autopilot/github/webhook and subscribe to Issues events. The configured label starts work. Repository mappings are the allowlist; enter one owner/repository=project ID per line."
-        >
-          <div className="space-y-3">
-            <Input
-              aria-label="GitHub autopilot trigger label"
-              value={githubIssueTriggerLabel}
-              disabled={!writeAllowed}
-              placeholder="autopilot"
-              onChange={(event) => setGithubIssueTriggerLabel(event.target.value)}
-            />
-            <textarea
-              aria-label="GitHub repository project mappings"
-              className="min-h-24 w-full rounded-md border border-input bg-background p-2 text-sm"
-              value={Object.entries(githubIssueProjectMappings)
-                .map(([repo, projectId]) => `${repo}=${projectId}`)
-                .join("\n")}
-              disabled={!writeAllowed}
-              placeholder="owner/repository=trusted-project-id"
-              onChange={(event) => {
-                const next: Record<string, ProjectId> = {};
-                for (const line of event.target.value.split("\n")) {
-                  const [repo, projectId] = line.split("=", 2).map((part) => part?.trim());
-                  if (repo && projectId) next[repo.toLowerCase()] = ProjectId.make(projectId);
-                }
-                setGithubIssueProjectMappings(next);
-              }}
-            />
-            <Input
-              type="password"
-              aria-label="GitHub webhook secret"
-              autoComplete="new-password"
-              value={githubWebhookSecret}
-              disabled={!writeAllowed}
-              placeholder={
-                settings.githubWebhookSecret === REDACTED_SECRET ? "Configured" : "Webhook secret"
-              }
-              onChange={(event) => setGithubWebhookSecret(event.target.value)}
-            />
-          </div>
-        </SettingsRow>
-        <SettingsRow
-          title="Slack"
-          description="Use /api/autopilot/slack/events for Events API requests and /api/autopilot/slack/commands for the /t3 command. Configure Slack’s signing secret, bot token, allowed channels, and default T3 project. App mentions and /t3 start intake."
-        >
-          <div className="space-y-3">
-            <Input
-              type="password"
-              aria-label="Slack signing secret"
-              autoComplete="new-password"
-              value={slackSigningSecret}
-              disabled={!writeAllowed}
-              placeholder={
-                settings.slackSigningSecret === REDACTED_SECRET
-                  ? "Signing secret configured"
-                  : "Signing secret"
-              }
-              onChange={(event) => setSlackSigningSecret(event.target.value)}
-            />
-            <Input
-              type="password"
-              aria-label="Slack bot token"
-              autoComplete="new-password"
-              value={slackBotToken}
-              disabled={!writeAllowed}
-              placeholder={
-                settings.slackBotToken === REDACTED_SECRET ? "Bot token configured" : "Bot token"
-              }
-              onChange={(event) => setSlackBotToken(event.target.value)}
-            />
-            <Input
-              aria-label="Slack allowed channel IDs"
-              value={slackAllowedChannelIds.join(", ")}
-              disabled={!writeAllowed}
-              placeholder="Allowed channel IDs, comma separated"
-              onChange={(event) =>
-                setSlackAllowedChannelIds(
-                  event.target.value
-                    .split(",")
-                    .map((value) => value.trim())
-                    .filter(Boolean),
-                )
-              }
-            />
-            <select
-              aria-label="Slack default T3 project"
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-              value={slackProjectId ?? ""}
-              disabled={!writeAllowed}
-              onChange={(event) =>
-                setSlackProjectId(event.target.value ? ProjectId.make(event.target.value) : null)
-              }
-            >
-              <option value="">Select a trusted T3 project…</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.title}
-                </option>
-              ))}
-            </select>
           </div>
         </SettingsRow>
         {error ? (
