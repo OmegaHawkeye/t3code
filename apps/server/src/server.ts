@@ -577,16 +577,14 @@ const layerTicketSourceFeedback = TicketSourceFeedback.layer.pipe(
 );
 
 const layerLinearAutopilotApproval = LinearAutopilotApproval.layer.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(LinearAutopilotRuns.layer, layerLinearAutopilotRun, layerTicketSourceFeedback),
-  ),
+  Layer.provideMerge(Layer.mergeAll(LinearAutopilotRuns.layer, layerLinearAutopilotRun)),
+  Layer.provide(layerTicketSourceFeedback),
 );
 
 const layerLinearAutopilotOperator = LinearAutopilotOperator.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       LinearAutopilotIntake.layer,
-      layerTicketSourceFeedback,
       LinearAutopilotRuns.layer,
       LinearAutopilotPhaseAttempts.layer,
       layerLinearAutopilotApproval,
@@ -600,10 +598,10 @@ const layerLinearAutopilotReconciler = LinearAutopilotReconciler.layer.pipe(
       LinearAutopilotRuns.layer,
       LinearAutopilotPhaseAttempts.layer,
       LinearAutopilotIntake.layer,
-      layerTicketSourceFeedback,
       layerLinearAutopilotApproval,
     ),
   ),
+  Layer.provide(layerTicketSourceFeedback),
   Layer.provide(layerPullRequestService),
 );
 

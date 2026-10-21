@@ -147,7 +147,10 @@ export function mapSettingsSecrets(
   const linearAutopilot = mapFields(
     settings.linearAutopilot,
     linearAutopilotSecretFields,
-    (field) => `linear-autopilot-${field === "clientId" ? "client-id" : "client-secret"}`,
+    (field) =>
+      `linear-autopilot-${
+        field === "clientId" ? "client-id" : field === "clientSecret" ? "client-secret" : field
+      }`,
   ) as ServerSettings["linearAutopilot"];
 
   return { ...settings, providerInstances, sourceControlHosts, usageLimitSources, linearAutopilot };
