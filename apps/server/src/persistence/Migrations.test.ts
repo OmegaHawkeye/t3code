@@ -110,7 +110,10 @@ describe("runMigrations", () => {
         yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
       }
 
-      assert.deepStrictEqual(yield* runMigrations(), [[64, "CanonicalizeThreadPullRequestLinks"]]);
+      assert.deepStrictEqual(yield* runMigrations(), [
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [73, "AutopilotTicketSources"],
+      ]);
       assert.deepStrictEqual(yield* history, migrationManifest);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
