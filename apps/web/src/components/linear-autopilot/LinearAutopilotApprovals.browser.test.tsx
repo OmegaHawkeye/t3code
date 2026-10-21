@@ -1,3 +1,9 @@
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -50,7 +56,12 @@ afterEach(async () => {
 
 describe("LinearAutopilotApprovals", () => {
   it("shows the reviewed plan, approves it, and removes it from the pending list", async () => {
-    await act(async () => root.render(<LinearAutopilotApprovals />));
+    const router = createRouter({
+      routeTree: createRootRoute({ component: LinearAutopilotApprovals }),
+      history: createMemoryHistory({ initialEntries: ["/settings/linear-autopilot/approvals"] }),
+    });
+    await router.load();
+    await act(async () => root.render(<RouterProvider router={router} />));
 
     expect(container.textContent).toContain("Build the workflow.");
     expect(container.textContent).toContain("The plan is safe.");
