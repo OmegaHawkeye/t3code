@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   environmentAxisValue,
+  primaryEnvironmentSettingsSearch,
   projectAxisValue,
   selectEnvironmentAxis,
   selectProjectAxis,
@@ -81,5 +82,12 @@ describe("environmentAxisValue", () => {
     expect(environmentAxisValue({ project: "p", checkout: "c" }, "laptop")).toBe("laptop");
     expect(environmentAxisValue({ project: "p" }, null)).toBe("all");
     expect(environmentAxisValue({ machine: "desk" }, "laptop")).toBe("desk");
+  });
+});
+
+describe("primaryEnvironmentSettingsSearch", () => {
+  it("limits environment settings to the primary environment", () => {
+    expect(primaryEnvironmentSettingsSearch("first")).toEqual({ machine: "first" });
+    expect(primaryEnvironmentSettingsSearch(null)).toEqual({});
   });
 });
