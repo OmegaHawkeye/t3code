@@ -1,5 +1,6 @@
 import { ProjectId, type ProjectSnapshot } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { ArrowLeftIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
@@ -235,20 +236,21 @@ export function AutopilotIntegrationSettingsPanel({
 
   return (
     <SettingsPageContainer className="gap-6">
-      <SettingsSection title={title}>
-        <SettingsRow
-          title={title}
-          description={
-            isGithub
-              ? "Create and install the preconfigured GitHub App, then choose the issue label and trusted repository mappings."
-              : "Create the preconfigured Slack app, connect a workspace, then configure its signing secret, allowed channels, and T3 project."
-          }
-          control={
-            <Button render={<Link to="/settings/linear-autopilot" />} variant="outline">
-              Back to Autopilot
-            </Button>
-          }
-        />
+      <SettingsSection
+        title={title}
+        icon={
+          <Button
+            render={<Link to="/settings/linear-autopilot" />}
+            variant="ghost-muted"
+            size="icon-sm"
+            aria-label="Back to Autopilot"
+            title="Back to Autopilot"
+            className="-ml-1.5"
+          >
+            <ArrowLeftIcon aria-hidden />
+          </Button>
+        }
+      >
         {isGithub ? (
           <>
             <SettingsRow
@@ -315,7 +317,7 @@ export function AutopilotIntegrationSettingsPanel({
           <>
             <SettingsRow
               title="Slack app setup"
-              description="Create the preconfigured Slack app, then enter its Client ID and Client Secret. Slack requires this T3 Code URL to be publicly reachable over HTTPS for OAuth and event delivery."
+              description="Create the preconfigured Slack app. This T3 Code URL must be publicly reachable over HTTPS for OAuth and event delivery."
               control={
                 slackManifestUrl ? (
                   <Button

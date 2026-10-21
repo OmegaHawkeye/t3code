@@ -5,6 +5,7 @@ import {
   type ProjectSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { ArrowLeftIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   isAtomCommandInterrupted,
@@ -342,16 +343,21 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
 
   return (
     <SettingsPageContainer className="gap-6">
-      <SettingsSection title="Autopilot integrations">
-        <SettingsRow
-          title="Autopilot integrations"
-          description="Manage the services that can provide work to Autopilot."
-          control={
-            <Button render={<Link to="/settings/linear-autopilot" />} variant="outline">
-              Back to Autopilot
-            </Button>
-          }
-        />
+      <SettingsSection
+        title="Autopilot integrations"
+        icon={
+          <Button
+            render={<Link to="/settings/linear-autopilot" />}
+            variant="ghost-muted"
+            size="icon-sm"
+            aria-label="Back to Autopilot"
+            title="Back to Autopilot"
+            className="-ml-1.5"
+          >
+            <ArrowLeftIcon aria-hidden />
+          </Button>
+        }
+      >
         <SettingsRow
           title="Linear OAuth app Client ID"
           description={
