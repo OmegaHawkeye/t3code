@@ -1,10 +1,13 @@
 import type { LinearAutopilotPendingApproval } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
+import { ArrowLeftIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
 import { Button } from "../ui/button";
+import { RefreshIcon } from "../ui/refresh-icon";
 
 const loadPendingApprovals = () =>
   runPrimaryHttp(
@@ -92,8 +95,18 @@ export function LinearAutopilotApprovals() {
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+      <header className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
+        <Button
+          render={<Link to="/settings/linear-autopilot" />}
+          variant="ghost-muted"
+          size="icon"
+          aria-label="Back to Autopilot settings"
+          title="Back to Autopilot settings"
+          className="mt-0.5"
+        >
+          <ArrowLeftIcon aria-hidden />
+        </Button>
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">Autopilot approvals</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Review the saved plan and independent review before approving the exact plan revision.
@@ -102,14 +115,17 @@ export function LinearAutopilotApprovals() {
         <Button
           type="button"
           variant="outline"
+          size="icon"
           disabled={loading}
+          aria-label="Refresh approvals"
+          title="Refresh approvals"
           onClick={() => {
             setLoading(true);
             setError(null);
             void refresh();
           }}
         >
-          Refresh
+          <RefreshIcon refreshing={loading} />
         </Button>
       </header>
 

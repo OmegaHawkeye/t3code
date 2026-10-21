@@ -19,6 +19,8 @@ import * as LinearAutopilotOperator from "./LinearAutopilotOperator.ts";
 import * as LinearAutopilotClient from "./LinearAutopilotClient.ts";
 import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
 import * as LinearAutopilotOAuth from "./LinearAutopilotOAuth.ts";
+import * as GitHubAppManifest from "../autopilot/GitHubAppManifest.ts";
+import * as SlackOAuth from "../autopilot/SlackOAuth.ts";
 
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -28,8 +30,46 @@ export const layer = HttpApiBuilder.group(
     const linearClient = yield* LinearAutopilotClient.LinearAutopilotClient;
     const tokenProvider = yield* LinearAutopilotToken.LinearAutopilotTokenProvider;
     const oauth = yield* LinearAutopilotOAuth.LinearAutopilotOAuth;
+    const githubManifest = yield* GitHubAppManifest.GitHubAppManifest;
+    const slackOAuth = yield* SlackOAuth.SlackOAuth;
 
     return handlers
+      .handle(
+        "slackOAuthStart",
+        Effect.fn("environment.linearAutopilot.slackOAuthStart")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const callbackOrigin = Option.match(HttpServerRequest.toURL(request), {
+            onNone: () => null,
+            onSome: (url) => url.origin,
+          });
+          if (!callbackOrigin) {
+            return yield* failEnvironmentInternal("internal_error", "Request URL unavailable");
+          }
+          return yield* slackOAuth
+            .start({ callbackOrigin, returnOrigin: args.headers.origin, ...args.payload })
+            .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
+        }),
+      )
+      .handle(
+        "githubAppManifestStart",
+        Effect.fn("environment.linearAutopilot.githubAppManifestStart")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const callbackOrigin = Option.match(HttpServerRequest.toURL(request), {
+            onNone: () => null,
+            onSome: (url) => url.origin,
+          });
+          if (!callbackOrigin) {
+            return yield* failEnvironmentInternal("internal_error", "Request URL unavailable");
+          }
+          return yield* githubManifest
+            .start({ callbackOrigin, returnOrigin: args.headers.origin })
+            .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
+        }),
+      )
       .handle(
         "oauthStatus",
         Effect.fn("environment.linearAutopilot.oauthStatus")(function* (args) {
@@ -91,7 +131,27 @@ export const layer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* tokenProvider.mint().pipe(
-            Effect.flatMap((accessToken) => linearClient.listCatalog({ accessToken })),
+            Effect.flatMap((accessToken) =>
+              linearClient.listCatalog({
+                accessToken,
+                ...(args.query.teamId ? { teamId: args.query.teamId } : {}),
+              }),
+            ),
+            Effect.catchIf(
+              (error) =>
+                error._tag === "LinearAutopilotClientError" &&
+                error.reason === "http" &&
+                error.status === 401,
+              () =>
+                tokenProvider.mint({ forceRefresh: true }).pipe(
+                  Effect.flatMap((accessToken) =>
+                    linearClient.listCatalog({
+                      accessToken,
+                      ...(args.query.teamId ? { teamId: args.query.teamId } : {}),
+                    }),
+                  ),
+                ),
+            ),
             Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
           );
         }),

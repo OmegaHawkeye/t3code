@@ -23,7 +23,9 @@ const observedAt = "2026-10-18T14:00:00.000Z";
 const candidate = (
   sourceUpdatedAt: string,
   eventId: string = "event-1",
+  source: "linear" | "github" | "slack" = "linear",
 ): typeof LinearAutopilotIntake.LinearAutopilotCandidate.Encoded => ({
+  source,
   eventId,
   workspaceId: "workspace-1",
   issueId: "issue-1",
@@ -37,6 +39,38 @@ const candidate = (
 });
 
 layer("LinearAutopilotIntakeRepository", (it) => {
+  it.effect("stores normalized tickets with provider-scoped identities", () =>
+    Effect.gen(function* () {
+      const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+      assert.isTrue(
+        yield* intake.ingestTicket({
+          ticket: {
+            source: "github",
+            sourceAccountId: "omega/t3code",
+            sourceTicketId: "42",
+            identifier: "omega/t3code#42",
+            title: "A GitHub issue",
+            url: "https://github.com/omega/t3code/issues/42",
+            description: "Body",
+            projectId: ProjectId.make("trusted-project-1"),
+            sourceUpdatedAt: revision1,
+          },
+          eventId: "github-delivery-42",
+          observedAt,
+        }),
+      );
+      const pending = yield* intake.listPending(10);
+      assert.equal(pending[0]?.source, "github");
+      assert.equal(pending[0]?.workspaceId, "github:omega/t3code");
+      const context = yield* intake.getIssueContext({
+        workspaceId: "github:omega/t3code",
+        issueId: "42",
+      });
+      assert.equal(context?.source, "github");
+      assert.equal(context?.identifier, "omega/t3code#42");
+    }),
+  );
+
   it.effect("deduplicates deliveries and only queues newer issue revisions", () =>
     Effect.gen(function* () {
       const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
@@ -47,22 +81,37 @@ layer("LinearAutopilotIntakeRepository", (it) => {
       assert.isTrue(yield* intake.ingest(candidate(revision2, "event-2")));
 
       const pending = yield* intake.listPending(10);
+      const linearPending = pending.filter(({ source }) => source === "linear");
       assert.deepStrictEqual(
-        pending.map(({ title, sourceUpdatedAt }) => [title, DateTime.formatIso(sourceUpdatedAt)]),
+        linearPending.map(({ title, sourceUpdatedAt }) => [
+          title,
+          DateTime.formatIso(sourceUpdatedAt),
+        ]),
         [
           ["Initial title", revision1],
           ["Updated title", revision2],
         ],
       );
 
-      yield* intake.markDispatched(pending[0]!.outboxId, DateTime.makeUnsafe(observedAt));
-      assert.equal((yield* intake.listPending(10)).length, 1);
+      yield* intake.markDispatched(linearPending[0]!.outboxId, DateTime.makeUnsafe(observedAt));
+      assert.equal(
+        (yield* intake.listPending(10)).filter(({ source }) => source === "linear").length,
+        1,
+      );
       const context = yield* intake.getIssueContext({
         workspaceId: "workspace-1",
         issueId: "issue-1",
       });
       assert.equal(context?.description, "Issue description");
       assert.equal(context?.projectId, ProjectId.make("trusted-project-1"));
+      assert.isTrue(
+        yield* intake.ingest({
+          ...candidate(revision1, "github-event", "github"),
+          workspaceId: "github:workspace-1",
+        }),
+      );
+      const crossSourcePending = yield* intake.listPending(10);
+      assert.equal(crossSourcePending.filter(({ source }) => source === "github").length, 2);
     }),
   );
 });

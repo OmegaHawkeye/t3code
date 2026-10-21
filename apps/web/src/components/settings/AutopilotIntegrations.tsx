@@ -1,4 +1,4 @@
-import { ArrowRightIcon, Clock3Icon, ListChecksIcon } from "lucide-react";
+import { ArrowRightIcon, ListChecksIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
@@ -21,16 +21,20 @@ const AUTOPILOT_INTEGRATIONS = [
     destination: "/settings/linear-autopilot/linear",
   },
   {
-    id: "slack",
-    name: "Slack",
-    description: "Connect team conversations to Autopilot workflows.",
-    availability: "coming-soon",
+    id: "github",
+    name: "GitHub Issues",
+    description:
+      "Create and install the GitHub App, then choose its issue trigger and trusted projects.",
+    availability: "available",
+    destination: "/settings/linear-autopilot/github",
   },
   {
-    id: "github-issues",
-    name: "GitHub Issues",
-    description: "Use GitHub issues as an additional work intake source.",
-    availability: "coming-soon",
+    id: "slack",
+    name: "Slack",
+    description:
+      "Create the Slack app, connect a workspace, and choose its signing secret, channels, and project.",
+    availability: "available",
+    destination: "/settings/linear-autopilot/slack",
   },
 ] as const satisfies readonly AutopilotIntegrationDefinition[];
 
@@ -44,17 +48,9 @@ export function AutopilotIntegrationsPanel() {
             title={integration.name}
             description={integration.description}
             control={
-              integration.availability === "available" && integration.destination ? (
-                <div className="flex items-center gap-2">
-                  <Button render={<Link to={integration.destination} />} variant="outline">
-                    Configure <ArrowRightIcon />
-                  </Button>
-                </div>
-              ) : (
-                <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                  <Clock3Icon className="size-4" /> Coming soon
-                </span>
-              )
+              <Button render={<Link to={integration.destination} />} variant="outline">
+                Configure <ArrowRightIcon />
+              </Button>
             }
           />
         ))}

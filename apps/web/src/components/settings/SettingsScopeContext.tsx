@@ -10,7 +10,10 @@ import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFil
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
-import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
+import {
+  primaryEnvironmentSettingsSearch,
+  selectSingleEnvironmentScope,
+} from "./settingsScopeAxis";
 
 type ProjectFileMember = readonly [
   environmentId: EnvironmentId,
@@ -55,18 +58,25 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
   );
 }
 
-function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironment: boolean) {
+function useResolvedSettingsScope(
+  rawSearch: SettingsScopeSearch,
+  singleEnvironment: boolean,
+  primaryEnvironmentOnly: boolean,
+) {
   const groups = useSettingsProjectGroups();
   const { environments: availableEnvironments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const scopeSearch = primaryEnvironmentOnly
+    ? primaryEnvironmentSettingsSearch(primaryEnvironmentId)
+    : rawSearch;
   const search = singleEnvironment
     ? selectSingleEnvironmentScope(
-        rawSearch,
-        resolveSettingsScope(rawSearch, groups, availableEnvironments),
+        scopeSearch,
+        resolveSettingsScope(scopeSearch, groups, availableEnvironments),
         availableEnvironments,
         primaryEnvironmentId,
       )
-    : rawSearch;
+    : scopeSearch;
   const scope = resolveSettingsScope(search, groups, availableEnvironments);
   const projectFiles = useMemberProjectFiles(scope);
   const selected = selectScopedSettingsEnvironments(
@@ -85,6 +95,7 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
 const SettingsScopeContext = createContext<
   | (ReturnType<typeof useResolvedSettingsScope> & {
       singleEnvironment: boolean;
+      primaryEnvironmentOnly: boolean;
       search: SettingsScopeSearch;
       selectScope: (next: SettingsScopeSearch) => void;
     })
@@ -96,14 +107,16 @@ export function SettingsScopeProvider({
   onChange,
   children,
   singleEnvironment = false,
+  primaryEnvironmentOnly = false,
 }: {
   singleEnvironment?: boolean;
+  primaryEnvironmentOnly?: boolean;
   search: SettingsScopeSearch;
   onChange: (next: SettingsScopeSearch) => void;
   children: ReactNode;
 }) {
-  const resolved = useResolvedSettingsScope(search, singleEnvironment);
-  const value = { ...resolved, singleEnvironment, selectScope: onChange };
+  const resolved = useResolvedSettingsScope(search, singleEnvironment, primaryEnvironmentOnly);
+  const value = { ...resolved, singleEnvironment, primaryEnvironmentOnly, selectScope: onChange };
   return <SettingsScopeContext value={value}>{children}</SettingsScopeContext>;
 }
 

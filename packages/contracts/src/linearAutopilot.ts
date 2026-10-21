@@ -49,6 +49,11 @@ export const LinearAutopilotOAuthStatus = Schema.Struct({
   redirectUri: Schema.String,
 });
 export const LinearAutopilotOAuthDisconnectResult = Schema.Struct({ disconnected: Schema.Boolean });
+export const GitHubAppManifestStartResult = Schema.Struct({
+  actionUrl: Schema.String,
+  state: Schema.String,
+  manifest: Schema.String,
+});
 
 export const LinearAutopilotApproveRequest = Schema.Struct({
   runId: Schema.String,

@@ -22,6 +22,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as LinearAutopilotPhaseLaunch from "./LinearAutopilotPhaseLaunch.ts";
 import * as LinearAutopilotDispatcher from "./LinearAutopilotDispatcher.ts";
+import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
 
 const now = DateTime.makeUnsafe("2026-10-19T11:00:00.000Z");
 const projectId = ProjectId.make("trusted-project-1");
@@ -53,12 +54,14 @@ const harness = (projectDefaultModelSelection: ModelSelection | null = modelSele
     LinearAutopilotIntake.layer,
     LinearAutopilotRuns.layer,
     LinearAutopilotPhaseAttempts.layer,
+    Layer.succeed(
+      TicketSourceFeedback.TicketSourceFeedback,
+      TicketSourceFeedback.TicketSourceFeedback.of({ update: () => Effect.void }),
+    ),
     ServerSettings.ServerSettingsService.layerTest(),
     Layer.mock(ProjectService.ProjectService)({
       getById: () =>
-        Effect.succeed(
-          Option.some({ ...project, defaultModelSelection: projectDefaultModelSelection }),
-        ),
+        Effect.succeedSome({ ...project, defaultModelSelection: projectDefaultModelSelection }),
     }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),

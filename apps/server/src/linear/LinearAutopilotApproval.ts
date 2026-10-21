@@ -9,6 +9,7 @@ import * as LinearAutopilotClient from "./LinearAutopilotClient.ts";
 import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as PersistenceErrors from "../persistence/Errors.ts";
+import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
 
 export interface LinearAutopilotApprovalRequest {
   readonly runId: string;
@@ -56,6 +57,7 @@ export class LinearAutopilotApproval extends Context.Service<
 const make = Effect.gen(function* () {
   const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
   const linear = yield* LinearAutopilotRun.LinearAutopilotRun;
+  const ticketFeedback = yield* TicketSourceFeedback.TicketSourceFeedback;
 
   const requestHumanApproval: LinearAutopilotApproval["Service"]["requestHumanApproval"] = (
     input,
@@ -95,11 +97,20 @@ const make = Effect.gen(function* () {
         if (!changed) return "stale";
       }
 
-      const session = yield* linear.begin({ teamId: input.teamId });
-      yield* session.updateIssueState({
-        issueId: input.issueId,
-        stateId: input.needsHumanApprovalStateId,
-      });
+      if (run.source === "linear") {
+        const session = yield* linear.begin({ teamId: input.teamId });
+        yield* session.updateIssueState({
+          issueId: input.issueId,
+          stateId: input.needsHumanApprovalStateId,
+        });
+      } else if (!alreadyAwaitingApproval) {
+        yield* ticketFeedback.update({
+          source: run.source,
+          workspaceId: run.workspaceId,
+          issueId: run.issueId,
+          status: "needs_approval",
+        });
+      }
       return "needs_approval";
     });
 

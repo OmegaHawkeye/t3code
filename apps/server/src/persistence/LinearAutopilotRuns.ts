@@ -7,10 +7,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as SqlError from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
 import { ProjectId } from "@t3tools/contracts";
+import { AutopilotTicketSource } from "@t3tools/contracts";
 
 import { type PersistenceSqlError, toPersistenceSqlError } from "./Errors.ts";
 
@@ -32,6 +32,7 @@ export type LinearAutopilotRunState = typeof LinearAutopilotRunState.Type;
 
 export const LinearAutopilotRun = Schema.Struct({
   runId: Schema.String,
+  source: AutopilotTicketSource,
   workspaceId: Schema.String,
   issueId: Schema.String,
   generation: Schema.Int,
@@ -54,10 +55,15 @@ export const LinearAutopilotRun = Schema.Struct({
 });
 export type LinearAutopilotRun = typeof LinearAutopilotRun.Type;
 
-const ActiveRunKey = Schema.Struct({ workspaceId: Schema.String, issueId: Schema.String });
+const ActiveRunKey = Schema.Struct({
+  source: AutopilotTicketSource,
+  workspaceId: Schema.String,
+  issueId: Schema.String,
+});
 const RunIdRequest = Schema.Struct({ runId: Schema.String });
 const NewRun = Schema.Struct({
   runId: Schema.String,
+  source: AutopilotTicketSource,
   workspaceId: Schema.String,
   issueId: Schema.String,
   projectId: ProjectId,
@@ -93,7 +99,9 @@ const ApprovalRequest = Schema.Struct({
   approvedAt: Schema.DateTimeUtcFromString,
 });
 const RunIdCodec = Schema.fromJsonString(
-  Schema.toCodecJson(Schema.Tuple([Schema.String, Schema.String, Schema.Int])),
+  Schema.toCodecJson(
+    Schema.Tuple([AutopilotTicketSource, Schema.String, Schema.String, Schema.Int]),
+  ),
 );
 
 const allowedTransitions: Readonly<
@@ -117,6 +125,7 @@ export class LinearAutopilotRunRepository extends Context.Service<
   LinearAutopilotRunRepository,
   {
     readonly createOrGetActive: (input: {
+      readonly source?: AutopilotTicketSource;
       readonly workspaceId: string;
       readonly issueId: string;
       readonly projectId: ProjectId;
@@ -151,9 +160,10 @@ const make = Effect.gen(function* () {
   const findActive = SqlSchema.findOneOption({
     Request: ActiveRunKey,
     Result: LinearAutopilotRun,
-    execute: ({ workspaceId, issueId }) => sql`
+    execute: ({ source, workspaceId, issueId }) => sql`
       SELECT
         run_id AS "runId",
+        source_kind AS "source",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
         project_id AS "projectId",
@@ -176,6 +186,7 @@ const make = Effect.gen(function* () {
       FROM linear_autopilot_runs
       WHERE workspace_id = ${workspaceId}
         AND issue_id = ${issueId}
+        AND source_kind = ${source}
         AND state NOT IN ('delivered', 'failed', 'cancelled')
       LIMIT 1
     `,
@@ -187,6 +198,7 @@ const make = Effect.gen(function* () {
     execute: ({ runId }) => sql`
       SELECT
         run_id AS "runId",
+        source_kind AS "source",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
         project_id AS "projectId",
@@ -213,9 +225,10 @@ const make = Effect.gen(function* () {
   const findLatest = SqlSchema.findOneOption({
     Request: ActiveRunKey,
     Result: LinearAutopilotRun,
-    execute: ({ workspaceId, issueId }) => sql`
+    execute: ({ source, workspaceId, issueId }) => sql`
       SELECT
         run_id AS "runId",
+        source_kind AS "source",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
         project_id AS "projectId",
@@ -236,7 +249,7 @@ const make = Effect.gen(function* () {
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM linear_autopilot_runs
-      WHERE workspace_id = ${workspaceId} AND issue_id = ${issueId}
+      WHERE workspace_id = ${workspaceId} AND issue_id = ${issueId} AND source_kind = ${source}
       ORDER BY generation DESC
       LIMIT 1
     `,
@@ -247,6 +260,7 @@ const make = Effect.gen(function* () {
     Result: LinearAutopilotRun,
     execute: ({
       runId,
+      source,
       workspaceId,
       issueId,
       projectId,
@@ -256,14 +270,15 @@ const make = Effect.gen(function* () {
       createdAt,
     }) => sql`
       INSERT INTO linear_autopilot_runs (
-        run_id, workspace_id, issue_id, project_id, generation, state,
+        run_id, source_kind, workspace_id, issue_id, project_id, generation, state,
         source_updated_at, snapshot_hash, created_at, updated_at
       ) VALUES (
-        ${runId}, ${workspaceId}, ${issueId}, ${projectId}, ${generation}, 'queued',
+        ${runId}, ${source}, ${workspaceId}, ${issueId}, ${projectId}, ${generation}, 'queued',
         ${sourceUpdatedAt}, ${snapshotHash}, ${createdAt}, ${createdAt}
       )
       RETURNING
         run_id AS "runId",
+        source_kind AS "source",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
         project_id AS "projectId",
@@ -292,6 +307,7 @@ const make = Effect.gen(function* () {
     execute: ({ limit }) => sql`
       SELECT
         run_id AS "runId",
+        source_kind AS "source",
         workspace_id AS "workspaceId",
         issue_id AS "issueId",
         project_id AS "projectId",
@@ -407,13 +423,16 @@ const make = Effect.gen(function* () {
       sql
         .withTransaction(
           Effect.gen(function* () {
+            const source = input.source ?? "linear";
             const current = yield* findActive({
+              source,
               workspaceId: input.workspaceId,
               issueId: input.issueId,
             }).pipe(Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.findActive:query")));
             if (Option.isSome(current)) return { run: current.value, created: false };
 
             const latest = yield* findLatest({
+              source,
               workspaceId: input.workspaceId,
               issueId: input.issueId,
             }).pipe(Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.findLatest:query")));
@@ -421,6 +440,7 @@ const make = Effect.gen(function* () {
 
             const generation = 1;
             const runIdPayload = yield* Schema.encodeEffect(RunIdCodec)([
+              source,
               input.workspaceId,
               input.issueId,
               generation,
@@ -430,7 +450,7 @@ const make = Effect.gen(function* () {
                 .digest("SHA-256", new TextEncoder().encode(runIdPayload))
                 .pipe(Effect.orDie),
             );
-            const run = yield* insertRun({ ...input, generation, runId }).pipe(
+            const run = yield* insertRun({ ...input, source, generation, runId }).pipe(
               Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.insertRun:query")),
             );
             return { run, created: true };

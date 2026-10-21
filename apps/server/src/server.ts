@@ -125,6 +125,10 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as LinearAutopilotClient from "./linear/LinearAutopilotClient.ts";
 import * as LinearAutopilotOAuth from "./linear/LinearAutopilotOAuth.ts";
 import * as LinearAutopilotOAuthCallback from "./linear/LinearAutopilotOAuthCallback.ts";
+import * as GitHubAppManifest from "./autopilot/GitHubAppManifest.ts";
+import * as GitHubAppManifestCallback from "./autopilot/GitHubAppManifestCallback.ts";
+import * as SlackOAuth from "./autopilot/SlackOAuth.ts";
+import * as SlackOAuthCallback from "./autopilot/SlackOAuthCallback.ts";
 import * as LinearAutopilotApproval from "./linear/LinearAutopilotApproval.ts";
 import * as LinearAutopilotDispatcher from "./linear/LinearAutopilotDispatcher.ts";
 import * as LinearAutopilotHttp from "./linear/LinearAutopilotHttp.ts";
@@ -135,6 +139,9 @@ import * as LinearAutopilotPoll from "./linear/LinearAutopilotPoll.ts";
 import * as LinearAutopilotRun from "./linear/LinearAutopilotRun.ts";
 import * as LinearAutopilotToken from "./linear/LinearAutopilotToken.ts";
 import * as LinearAutopilotWorker from "./linear/LinearAutopilotWorker.ts";
+import * as TicketSourceWebhookRoute from "./autopilot/TicketSourceWebhookRoute.ts";
+import * as TicketSourceFeedback from "./autopilot/TicketSourceFeedback.ts";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as LinearAutopilotIntake from "./persistence/LinearAutopilotIntake.ts";
 import * as LinearAutopilotPhaseAttempts from "./persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotRuns from "./persistence/LinearAutopilotRuns.ts";
@@ -546,13 +553,32 @@ const layerLinearAutopilotRun = LinearAutopilotRun.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(LinearAutopilotClient.layer, layerLinearAutopilotToken)),
 );
 
+const layerGitHubAppManifest = GitHubAppManifest.layer.pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provideMerge(layerServerSettings),
+);
+const layerSlackOAuth = SlackOAuth.layer.pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provideMerge(layerServerSettings),
+);
+const layerAutopilotProviderConnections = Layer.mergeAll(layerGitHubAppManifest, layerSlackOAuth);
+
 const layerLinearAutopilotHttpRoutes = Layer.mergeAll(
   LinearAutopilotHttp.layer,
   LinearAutopilotOAuthCallback.layer,
+  GitHubAppManifestCallback.layer,
+  SlackOAuthCallback.layer,
 ).pipe(Layer.provideMerge(layerLinearAutopilotRun));
+
+const layerTicketSourceFeedback = TicketSourceFeedback.layer.pipe(
+  Layer.provideMerge(GitHubRest.layerWithDependencies),
+  Layer.provideMerge(layerServerSettings),
+  Layer.provideMerge(FetchHttpClient.layer),
+);
 
 const layerLinearAutopilotApproval = LinearAutopilotApproval.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(LinearAutopilotRuns.layer, layerLinearAutopilotRun)),
+  Layer.provide(layerTicketSourceFeedback),
 );
 
 const layerLinearAutopilotOperator = LinearAutopilotOperator.layer.pipe(
@@ -575,6 +601,7 @@ const layerLinearAutopilotReconciler = LinearAutopilotReconciler.layer.pipe(
       layerLinearAutopilotApproval,
     ),
   ),
+  Layer.provide(layerTicketSourceFeedback),
   Layer.provide(layerPullRequestService),
 );
 
@@ -587,6 +614,7 @@ const layerLinearAutopilotWorker = Layer.effectDiscard(
   Layer.provide(LinearAutopilotWorker.layer),
   Layer.provide(layerLinearAutopilotReconciler),
   Layer.provide(LinearAutopilotDispatcher.layer),
+  Layer.provide(layerTicketSourceFeedback),
   Layer.provide(LinearAutopilotPhaseAttempts.layer),
   Layer.provide(LinearAutopilotPoll.layer),
   Layer.provide(layerLinearAutopilotRun),
@@ -769,6 +797,13 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(layerLinearAutopilotHttpRoutes),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
+      Layer.provide(
+        TicketSourceWebhookRoute.layer.pipe(
+          Layer.provide(LinearAutopilotIntake.layer),
+          Layer.provide(layerServerSettings),
+          Layer.provide(FetchHttpClient.layer),
+        ),
+      ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
@@ -1153,6 +1188,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
       Layer.provide(layerLinearAutopilotOAuth),
+      Layer.provideMerge(layerAutopilotProviderConnections),
     );
   }),
 ).pipe(Layer.provide(ProcessRunner.layer));

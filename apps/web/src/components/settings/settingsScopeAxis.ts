@@ -106,3 +106,7 @@ export function selectSingleEnvironmentScope(
     candidates[0];
   return selected ? { ...search, machine: selected.environmentId } : search;
 }
+
+export function primaryEnvironmentSettingsSearch(primaryEnvironmentId: string | null) {
+  return primaryEnvironmentId === null ? {} : { machine: primaryEnvironmentId };
+}

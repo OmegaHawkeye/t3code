@@ -73,6 +73,7 @@ import {
   LinearAutopilotOAuthDisconnectResult,
   LinearAutopilotOAuthStartResult,
   LinearAutopilotOAuthStatus,
+  GitHubAppManifestStartResult,
 } from "./linearAutopilot.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
@@ -719,8 +720,33 @@ class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopil
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("githubAppManifestStart", "/api/autopilot/github/app/start", {
+      headers: LinearOAuthStartHeaders,
+      success: GitHubAppManifestStartResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("slackOAuthStart", "/api/autopilot/slack/oauth/start", {
+      headers: LinearOAuthStartHeaders,
+      payload: Schema.Struct({
+        clientId: Schema.optionalKey(
+          Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)),
+        ),
+        clientSecret: Schema.optionalKey(
+          Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)),
+        ),
+      }),
+      success: LinearAutopilotOAuthStartResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.get("catalog", "/api/linear-autopilot/catalog", {
       headers: OptionalBearerHeaders,
+      query: Schema.Struct({
+        teamId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+      }),
       success: LinearAutopilotCatalog,
       error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -826,6 +852,24 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+const TicketSourceWebhookResponse = Schema.Struct({ accepted: Schema.Boolean });
+class EnvironmentTicketSourceWebhooksHttpApi extends HttpApiGroup.make("ticketSourceWebhooks")
+  .add(
+    HttpApiEndpoint.post("githubIssueWebhook", "/api/autopilot/github/webhook", {
+      success: TicketSourceWebhookResponse,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("slackEventsWebhook", "/api/autopilot/slack/events", {
+      success: TicketSourceWebhookResponse,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("slackCommandsWebhook", "/api/autopilot/slack/commands", {
+      success: TicketSourceWebhookResponse,
+    }),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -835,4 +879,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentLinearAutopilotHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(EnvironmentTicketSourceWebhooksHttpApi) {}

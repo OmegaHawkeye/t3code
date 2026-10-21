@@ -8,6 +8,7 @@ import "~/index.css";
 
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { MarkdownFindContext } from "./markdownFindContext";
+import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { useThreadFindHighlights } from "./threadFindHighlights";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 
@@ -98,6 +99,7 @@ const foldToggle = () =>
   );
 
 it("shows a short script as highlighted code with nothing to open", async () => {
+  await getSyntaxHighlighterPromise("javascript");
   await render(SHORT_SCRIPT);
   expect(host.querySelector('[data-language="javascript"]')?.textContent).toContain("SCRIPTONLY");
   await vi.waitFor(() => expect(host.querySelector(".chat-markdown-shiki")).not.toBeNull());

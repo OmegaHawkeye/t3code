@@ -22,7 +22,8 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementErrors from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import type { ServerSettingsError } from "@t3tools/contracts";
+import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
+import type { LinearAutopilotSettings, ServerSettingsError } from "@t3tools/contracts";
 
 const APPROVAL_POLICY_VERSION = "human-review-v1";
 const MAX_PHASE_SUMMARY_LENGTH = 4000;
@@ -113,7 +114,29 @@ const make = Effect.gen(function* () {
   const linear = yield* LinearAutopilotRun.LinearAutopilotRun;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const ticketFeedback = yield* TicketSourceFeedback.TicketSourceFeedback;
   const crypto = yield* Crypto.Crypto;
+
+  const updateTicketStatus = (
+    run: LinearAutopilotRuns.LinearAutopilotRun,
+    autopilot: LinearAutopilotSettings,
+    status: TicketSourceFeedback.TicketSourceStatus,
+    linearStateId: string,
+    pullRequestUrl?: string,
+  ) => {
+    if (run.source !== "linear")
+      return ticketFeedback.update({
+        source: run.source,
+        workspaceId: run.workspaceId,
+        issueId: run.issueId,
+        status,
+        ...(pullRequestUrl === undefined ? {} : { pullRequestUrl }),
+      });
+    if (autopilot.teamId.length === 0 || linearStateId.length === 0) return Effect.void;
+    return Effect.flatMap(linear.begin({ teamId: autopilot.teamId }), (session) =>
+      session.updateIssueState({ issueId: run.issueId, stateId: linearStateId }),
+    );
+  };
 
   const launchImplementationFollowUp = (
     run: LinearAutopilotRuns.LinearAutopilotRun,
@@ -213,7 +236,7 @@ const make = Effect.gen(function* () {
                 run,
                 "repair",
                 attempt.attemptNumber,
-                `Repair the implementation based on the failed verification below. Make only changes needed to resolve the reported failures. Do not commit, push, open a pull request, or change the Linear issue state.\n\n${verification?.summary?.slice(0, MAX_PHASE_SUMMARY_LENGTH) ?? "Verification reported a failure."}`,
+                `Repair the implementation based on the failed verification below. Make only changes needed to resolve the reported failures. Do not commit, push, open a pull request, or change the source ticket state.\n\n${verification?.summary?.slice(0, MAX_PHASE_SUMMARY_LENGTH) ?? "Verification reported a failure."}`,
               );
               if (!launched) deferred += 1;
             } else {
@@ -241,13 +264,12 @@ const make = Effect.gen(function* () {
             )
           ) {
             const autopilot = currentSettings.linearAutopilot;
-            if (autopilot.teamId.length > 0 && autopilot.needsHumanApprovalStateId.length > 0) {
-              const session = yield* linear.begin({ teamId: autopilot.teamId });
-              yield* session.updateIssueState({
-                issueId: run.issueId,
-                stateId: autopilot.needsHumanApprovalStateId,
-              });
-            }
+            yield* updateTicketStatus(
+              run,
+              autopilot,
+              "needs_approval",
+              autopilot.needsHumanApprovalStateId,
+            );
             deferred += 1;
             continue;
           }
@@ -285,13 +307,7 @@ const make = Effect.gen(function* () {
               updatedAt: yield* DateTime.now,
             });
             const autopilot = currentSettings.linearAutopilot;
-            if (autopilot.teamId.length > 0 && autopilot.blockedStateId.length > 0) {
-              const session = yield* linear.begin({ teamId: autopilot.teamId });
-              yield* session.updateIssueState({
-                issueId: run.issueId,
-                stateId: autopilot.blockedStateId,
-              });
-            }
+            yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
             continue;
           }
         }
@@ -372,24 +388,15 @@ const make = Effect.gen(function* () {
                 updatedAt: yield* DateTime.now,
               });
               const autopilot = currentSettings.linearAutopilot;
-              if (
-                transitioned &&
-                autopilot.teamId.length > 0 &&
-                autopilot.blockedStateId.length > 0
-              ) {
-                const session = yield* linear.begin({ teamId: autopilot.teamId });
-                yield* session.updateIssueState({
-                  issueId: run.issueId,
-                  stateId: autopilot.blockedStateId,
-                });
-              }
+              if (transitioned)
+                yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
               continue;
             }
             const launched = yield* launchImplementationFollowUp(
               run,
               "repair",
               (repair?.attemptNumber ?? 0) + 1,
-              `Repair the implementation based on this failed verification. Make only changes needed to resolve the reported failures. Do not commit, push, open a pull request, or change the Linear issue state.\n\n${attempt.summary.slice(0, MAX_PHASE_SUMMARY_LENGTH)}`,
+              `Repair the implementation based on this failed verification. Make only changes needed to resolve the reported failures. Do not commit, push, open a pull request, or change the source ticket state.\n\n${attempt.summary.slice(0, MAX_PHASE_SUMMARY_LENGTH)}`,
             );
             if (!launched) deferred += 1;
             continue;
@@ -409,7 +416,7 @@ const make = Effect.gen(function* () {
               run,
               "delivery",
               1,
-              "The implementation passed verification. Commit the reviewed changes on this isolated worktree branch, push that branch, and open one pull request targeting the approved base branch. Include the Linear issue identifier in the title or body and return the pull request URL. Never merge the pull request or mark the Linear issue Done. Use T3's existing source-control and pull-request tools; stop for any provider approval request rather than bypassing it.",
+              "The implementation passed verification. Commit the reviewed changes on this isolated worktree branch, push that branch, and open one pull request targeting the approved base branch. Include the source ticket identifier in the title or body and return the pull request URL. Never merge the pull request or mark the source ticket done. Use T3's existing source-control and pull-request tools; stop for any provider approval request rather than bypassing it.",
             );
             if (!launched) deferred += 1;
             continue;
@@ -437,17 +444,8 @@ const make = Effect.gen(function* () {
               updatedAt: yield* DateTime.now,
             });
             const autopilot = currentSettings.linearAutopilot;
-            if (
-              transitioned &&
-              autopilot.teamId.length > 0 &&
-              autopilot.blockedStateId.length > 0
-            ) {
-              const session = yield* linear.begin({ teamId: autopilot.teamId });
-              yield* session.updateIssueState({
-                issueId: run.issueId,
-                stateId: autopilot.blockedStateId,
-              });
-            }
+            if (transitioned)
+              yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
             continue;
           }
           const reference = pullRequestRef({ ...pullRequest, projectId: run.projectId });
@@ -477,17 +475,8 @@ const make = Effect.gen(function* () {
               updatedAt: yield* DateTime.now,
             });
             const autopilot = currentSettings.linearAutopilot;
-            if (
-              transitioned &&
-              autopilot.teamId.length > 0 &&
-              autopilot.blockedStateId.length > 0
-            ) {
-              const session = yield* linear.begin({ teamId: autopilot.teamId });
-              yield* session.updateIssueState({
-                issueId: run.issueId,
-                stateId: autopilot.blockedStateId,
-              });
-            }
+            if (transitioned)
+              yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
             continue;
           }
           if (pullRequestSummary.checksState !== "passing") {
@@ -510,7 +499,7 @@ const make = Effect.gen(function* () {
                 run,
                 "delivery",
                 attempt.attemptNumber + 1,
-                `CI failed for pull request ${pullRequest.url}. Make one bounded repair to address only these reported failures, run the affected checks, then push the repair to the same pull request branch. Do not create another pull request, merge, or mark the Linear issue Done.\n\n${failures || "The host reports failing checks without detailed names."}`,
+                `CI failed for pull request ${pullRequest.url}. Make one bounded repair to address only these reported failures, run the affected checks, then push the repair to the same pull request branch. Do not create another pull request, merge, or mark the source ticket done.\n\n${failures || "The host reports failing checks without detailed names."}`,
               );
               if (!launched) deferred += 1;
               continue;
@@ -523,17 +512,8 @@ const make = Effect.gen(function* () {
                 updatedAt: yield* DateTime.now,
               });
               const autopilot = currentSettings.linearAutopilot;
-              if (
-                transitioned &&
-                autopilot.teamId.length > 0 &&
-                autopilot.blockedStateId.length > 0
-              ) {
-                const session = yield* linear.begin({ teamId: autopilot.teamId });
-                yield* session.updateIssueState({
-                  issueId: run.issueId,
-                  stateId: autopilot.blockedStateId,
-                });
-              }
+              if (transitioned)
+                yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
               continue;
             }
             deferred += 1;
@@ -546,13 +526,14 @@ const make = Effect.gen(function* () {
             updatedAt: yield* DateTime.now,
           });
           const autopilot = currentSettings.linearAutopilot;
-          if (delivered && autopilot.teamId.length > 0 && autopilot.reviewStateId.length > 0) {
-            const session = yield* linear.begin({ teamId: autopilot.teamId });
-            yield* session.updateIssueState({
-              issueId: run.issueId,
-              stateId: autopilot.reviewStateId,
-            });
-          }
+          if (delivered)
+            yield* updateTicketStatus(
+              run,
+              autopilot,
+              "in_review",
+              autopilot.reviewStateId,
+              pullRequest.url,
+            );
           continue;
         }
 
@@ -640,8 +621,9 @@ const make = Effect.gen(function* () {
         if (
           run.projectId === null ||
           run.baseRef === null ||
-          settingsForLinear.teamId.length === 0 ||
-          settingsForLinear.needsHumanApprovalStateId.length === 0
+          (run.source === "linear" &&
+            (settingsForLinear.teamId.length === 0 ||
+              settingsForLinear.needsHumanApprovalStateId.length === 0))
         ) {
           deferred += 1;
           continue;

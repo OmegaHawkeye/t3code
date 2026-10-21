@@ -1530,6 +1530,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             ...DEFAULT_SERVER_SETTINGS.linearAutopilot,
             clientId: "linear-client-id-secret",
             clientSecret: "linear-client-secret-secret",
+            githubWebhookSecret: "github-webhook-secret",
+            slackSigningSecret: "slack-signing-secret",
+            slackClientId: "slack-client-id-secret",
+            slackClientSecret: "slack-client-secret-secret",
+            slackBotToken: "slack-bot-token-secret",
           },
         });
         const values = [
@@ -1541,6 +1546,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           "quota-secret",
           "linear-client-id-secret",
           "linear-client-secret-secret",
+          "github-webhook-secret",
+          "slack-signing-secret",
+          "slack-client-id-secret",
+          "slack-client-secret-secret",
+          "slack-bot-token-secret",
         ];
         const client = ServerSettingsModule.redactServerSettingsForClient(saved);
         const disk = yield* fs.readFileString(config.settingsPath);

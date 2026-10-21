@@ -32,6 +32,7 @@ const seedIssue = (issueId: string) =>
   Effect.gen(function* () {
     const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
     yield* intake.ingest({
+      source: "linear",
       eventId: null,
       workspaceId: "workspace-1",
       issueId,
