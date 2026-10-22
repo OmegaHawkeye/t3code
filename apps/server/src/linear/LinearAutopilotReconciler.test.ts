@@ -35,6 +35,7 @@ const harness = (
     readonly projection?: unknown;
     readonly pullRequestSummary?: unknown;
     readonly pullRequestChecks?: unknown;
+    readonly reviewGuideModelSelection?: ModelSelection;
   } = {},
 ) => {
   const reviewLaunches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotReadOnlyLaunchInput> = [];
@@ -52,7 +53,7 @@ const harness = (
       TicketSourceFeedback.TicketSourceFeedback.of({ update: () => Effect.void }),
     ),
     ServerSettings.ServerSettingsService.layerTest({
-      reviewGuideModelSelection: reviewerModel,
+      reviewGuideModelSelection: options.reviewGuideModelSelection ?? reviewerModel,
       linearAutopilot: {
         teamId: "team-1",
         needsHumanApprovalStateId: "approval-state-1",
@@ -303,6 +304,31 @@ it.effect("records a completed plan and launches an independent read-only review
     );
   }).pipe(Effect.provide(setup.layer));
 });
+
+it.effect(
+  "launches review when the reviewer shares the planner's instance but differs in model",
+  () => {
+    const sameInstanceReviewer: ModelSelection = {
+      instanceId: plannerModel.instanceId,
+      model: "gpt-6-sol-mini",
+    };
+    const setup = harness({
+      completePlanning: true,
+      reviewGuideModelSelection: sameInstanceReviewer,
+    });
+    return Effect.gen(function* () {
+      const runId = yield* seedRun("planning");
+      yield* seedRunningAttempt(runId, "planning");
+      const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+      const result = yield* reconciler.reconcile();
+      // No-self-review keys off full ModelSelection identity, not just the
+      // provider instance, so a different model on the same instance is a
+      // distinct reviewer.
+      assert.equal(result.reviewsLaunched, 1, JSON.stringify(result));
+      assert.equal(setup.reviewLaunches[0]?.modelSelection.model, "gpt-6-sol-mini");
+    }).pipe(Effect.provide(setup.layer));
+  },
+);
 
 it.effect("sends only an explicit approve verdict to the exact human approval gate", () => {
   const setup = harness();
