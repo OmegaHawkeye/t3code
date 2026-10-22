@@ -604,6 +604,68 @@ function makeTurnInput(input: {
 }
 
 describe("AcpAdapterV2", () => {
+  it.live("rejects a turn carrying persona instructions (no trusted ACP channel)", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-persona-gate");
+      const threadId = ThreadId.make("thread-acp-persona-gate");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          capabilities: AcpProviderCapabilitiesV2,
+          registerExtensions: registerMistralVibeAcpExtensions,
+          promptFailure: (cause) => acpRegistryPromptFailure("mistral-vibe", cause),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            environment: {},
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("session-acp-persona-gate"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const exit = yield* Effect.exit(
+        runtime.startTurn({
+          ...makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+          personaInstructions: {
+            personaName: "independent-reviewer",
+            revision: "rev-1",
+            text: "Review the plan independently.",
+          },
+        }),
+      );
+      assert.isTrue(Exit.isFailure(exit), "ACP must reject a turn carrying persona instructions");
+      if (Exit.isFailure(exit)) {
+        assert.match(Cause.pretty(exit.cause), /persona/i);
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(
     "projects Mistral retry notices and their %s outcome",
     (outcome) =>
