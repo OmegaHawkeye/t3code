@@ -7,6 +7,7 @@ import {
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
+  type ResolvedPersonaInstructions,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2ProviderThreadNativeMetadata,
@@ -82,6 +83,7 @@ export interface ThreadLaunchInput {
   readonly title: string;
   readonly generateTitle?: boolean;
   readonly modelSelection: ModelSelection;
+  readonly personaInstructions?: ResolvedPersonaInstructions;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -973,6 +975,9 @@ const make = Effect.gen(function* () {
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
+              ...(input.personaInstructions === undefined
+                ? {}
+                : { personaInstructions: input.personaInstructions }),
               dispatchMode: { type: "defer_start", workspaceStrategy },
               createdBy: input.createdBy,
               creationSource: input.creationSource,

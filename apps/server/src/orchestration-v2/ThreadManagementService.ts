@@ -14,6 +14,7 @@ import {
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
   type ModelSelection,
+  type ResolvedPersonaInstructions,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
   type OrchestrationV2GetTurnItemResult,
@@ -128,6 +129,7 @@ export interface ThreadManagementSendInput {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
+  readonly personaInstructions?: ResolvedPersonaInstructions;
   readonly mode: ThreadManagementSendMode;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
@@ -790,6 +792,9 @@ const make = Effect.gen(function* () {
         text: input.text,
         attachments: input.attachments,
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        ...(input.personaInstructions === undefined
+          ? {}
+          : { personaInstructions: input.personaInstructions }),
         dispatchMode,
         createdBy: input.createdBy,
         creationSource: input.creationSource,
