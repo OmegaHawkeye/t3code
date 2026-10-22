@@ -1,4 +1,7 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type {
+  OrchestrationV2HistoricalMessage,
+  ResolvedPersonaInstructions,
+} from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -394,16 +397,13 @@ export const ProviderAdapterV2Error = Schema.Union([
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
 
 /**
- * A persona's resolved, bounded, append-only instructions, pinned per run. Composed
- * with T3's own developer instructions at the provider boundary; never placed in the
- * untrusted appContext. Providers without a trusted instruction channel (ACP, local)
- * surface a capability limit rather than silently dropping it.
+ * {@link ResolvedPersonaInstructions} (from `@t3tools/contracts`): a persona's resolved,
+ * bounded, append-only instructions, pinned per run. Composed with T3's own developer
+ * instructions at the provider boundary; never placed in the untrusted appContext.
+ * Providers without a trusted instruction channel (ACP, local) surface a capability
+ * limit rather than silently dropping it.
  */
-export interface ResolvedPersonaInstructions {
-  readonly personaName: string;
-  readonly revision: string;
-  readonly text: string;
-}
+export type { ResolvedPersonaInstructions };
 
 export interface ProviderAdapterV2OpenSessionInput {
   readonly threadId: ThreadId;
