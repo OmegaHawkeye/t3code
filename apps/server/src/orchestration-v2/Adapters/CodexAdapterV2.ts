@@ -723,6 +723,7 @@ export function buildCodexTurnStartParams(input: {
   /** ChatGPT token sharing does not accept service tiers. */
   readonly omitServiceTier?: boolean;
   readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+  readonly personaInstructions?: ProviderAdapter.ProviderAdapterV2TurnInput["personaInstructions"];
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -744,10 +745,17 @@ export function buildCodexTurnStartParams(input: {
       input.omitServiceTier === true
         ? undefined
         : getCodexServiceTierOptionValue(input.modelSelection);
-    const developerInstructions =
+    // Persona instructions are trusted developer guidance: compose them after T3's own
+    // developer instructions, never through the untrusted appContext. They must reach
+    // Codex even when the T3 MCP server is absent.
+    const t3DeveloperInstructions =
       input.hasT3Mcp !== true
         ? undefined
         : buildCodexDeveloperInstructions(input.runtimePolicy.interactionMode);
+    const developerInstructions =
+      [t3DeveloperInstructions, input.personaInstructions?.text]
+        .filter((part): part is string => part !== undefined && part.length > 0)
+        .join("\n\n") || undefined;
     // An app's context is text an MCP server wrote, so it goes in as untrusted
     // context: Codex renders it as quoted user-side input, never as developer
     // instructions.
@@ -6203,6 +6211,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              ...(turnInput.personaInstructions === undefined
+                ? {}
+                : { personaInstructions: turnInput.personaInstructions }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);

@@ -587,6 +587,48 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect(
+    "delivers persona instructions as trusted developer instructions, never untrusted context",
+    () =>
+      Effect.gen(function* () {
+        const personaInstructions = {
+          personaName: "security-reviewer",
+          revision: "rev-1",
+          text: "Act as a security reviewer; scrutinize auth and input validation.",
+        };
+        // Without the T3 MCP server, persona instructions must still be delivered.
+        const withoutT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-persona-no-t3",
+          codexInput: [{ type: "text", text: "review this" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: false,
+          personaInstructions,
+        });
+        assert.isDefined(withoutT3.collaborationMode);
+        assert.include(
+          withoutT3.collaborationMode?.settings.developer_instructions ?? "",
+          personaInstructions.text,
+        );
+        for (const entry of Object.values(withoutT3.additionalContext ?? {})) {
+          assert.notInclude((entry as { value: string }).value, personaInstructions.text);
+        }
+
+        // With the T3 MCP server, persona text composes alongside T3's own developer instructions.
+        const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-persona-with-t3",
+          codexInput: [{ type: "text", text: "review this" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: true,
+          personaInstructions,
+        });
+        const withT3Dev = withT3.collaborationMode?.settings.developer_instructions ?? "";
+        assert.include(withT3Dev, personaInstructions.text);
+        assert.notEqual(withT3Dev, personaInstructions.text);
+      }),
+  );
+
   it.effect("compiles per-turn Codex model options and cwd from their owning inputs", () =>
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
