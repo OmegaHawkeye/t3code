@@ -512,6 +512,41 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
 });
 
+const pinnedPersonaSurvivesStaleRunUpdate = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = yield* addRolledBackRecoveryCandidate("persona-pin-stale-update");
+  const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+  const now = yield* DateTime.now;
+  const personaInstructions = {
+    personaName: "reviewer",
+    revision: "rev-1",
+    text: "Be strict and terse.",
+  };
+  // The run-lifetime persona pin is set at dispatch; resume/retry reloads it.
+  yield* store.apply({
+    id: EventId.make("event:persona-pin-stale-update:pinned"),
+    type: "run.updated",
+    threadId,
+    runId: run.id,
+    providerInstanceId,
+    occurredAt: now,
+    payload: { ...run, personaInstructions, status: "running" },
+  });
+  // A later status change whose payload omits the pin must not wipe it.
+  yield* store.apply({
+    id: EventId.make("event:persona-pin-stale-update:completed"),
+    type: "run.updated",
+    threadId,
+    runId: run.id,
+    providerInstanceId,
+    occurredAt: now,
+    payload: { ...run, status: "completed", completedAt: now },
+  });
+  const updated = (yield* store.getThreadProjection(threadId)).runs[0];
+  assert.equal(updated?.status, "completed");
+  assert.deepEqual(updated?.personaInstructions, personaInstructions);
+});
+
 const threadWorktreePathsReadActiveThreads = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
@@ -656,6 +691,10 @@ it.effect("memory worktree path lookup reads only active threads", () =>
 
 it.effect("memory projection keeps restart-cancelled work through a stale run.updated", () =>
   restartCancelledWorkSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
+it.effect("memory projection keeps a pinned persona through a stale run.updated", () =>
+  pinnedPersonaSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
 it.effect("memory recovery selection ignores unfinished items from rolled-back runs", () =>
@@ -885,6 +924,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
+  );
+  it.effect(
+    "keeps a pinned persona through a stale run.updated",
+    () => pinnedPersonaSurvivesStaleRunUpdate,
   );
   it.effect("records restart-cancelled work without regressing a run that completed since", () =>
     Effect.gen(function* () {
