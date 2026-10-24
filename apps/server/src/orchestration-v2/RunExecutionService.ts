@@ -546,6 +546,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
+  readonly personaInstructions?: ProviderAdapter.ResolvedPersonaInstructions;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
 
@@ -1427,6 +1428,9 @@ export const layer: Layer.Layer<
             providerThread: input.providerThread,
             message: input.message,
             modelSelection: input.modelSelection,
+            ...(input.personaInstructions === undefined
+              ? {}
+              : { personaInstructions: input.personaInstructions }),
             runtimePolicy: input.runtimePolicy,
             ...(appContext.length === 0 ? {} : { appContext }),
           };

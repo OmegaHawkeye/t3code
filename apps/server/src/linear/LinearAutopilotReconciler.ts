@@ -1,4 +1,5 @@
 import { ThreadId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -580,7 +581,10 @@ const make = Effect.gen(function* () {
             .pipe(Effect.result);
           if (
             planProjectionResult._tag === "Failure" ||
-            planProjectionResult.success.thread.modelSelection.instanceId === reviewModel.instanceId
+            // No-self-review: the reviewer must not resolve to the planner's
+            // full identity (instance + model + options), not merely a
+            // different provider instance.
+            modelSelectionsEqual(planProjectionResult.success.thread.modelSelection, reviewModel)
           ) {
             deferred += 1;
             continue;

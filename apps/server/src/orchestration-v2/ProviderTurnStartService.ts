@@ -1249,6 +1249,9 @@ export const layer: Layer.Layer<
             : { senderThreadId: message.senderThreadId }),
         },
         modelSelection: run.modelSelection,
+        ...(run.personaInstructions === undefined
+          ? {}
+          : { personaInstructions: run.personaInstructions }),
         runtimePolicy: resolvedRuntimePolicy,
       });
     });

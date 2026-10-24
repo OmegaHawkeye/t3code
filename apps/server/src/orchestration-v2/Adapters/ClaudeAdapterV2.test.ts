@@ -769,6 +769,31 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
   });
 
+  it("appends persona instructions to the Claude system prompt after T3's own", () => {
+    const personaInstructions = {
+      personaName: "security-reviewer",
+      revision: "rev-1",
+      text: "Act as a security reviewer; scrutinize auth and input validation.",
+    };
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+      nativeThreadId: "native-thread-claude-persona",
+      resume: false,
+      cwd: "/workspace",
+      allowedTools: [],
+      mcpServers: {},
+      environment: {},
+      personaInstructions,
+    });
+    const systemPrompt = options.systemPrompt as { readonly append?: string };
+    assert.include(systemPrompt.append ?? "", personaInstructions.text);
+    // Composed alongside T3's own runtime instructions, never replacing them.
+    assert.notEqual(systemPrompt.append ?? "", personaInstructions.text);
+  });
+
   it.effect("writes Claude Agent SDK protocol frames to the native provider log", () =>
     Effect.gen(function* () {
       const writes: Array<{

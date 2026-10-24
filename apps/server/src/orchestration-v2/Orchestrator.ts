@@ -4780,6 +4780,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+      const personaInstructions = command.personaInstructions;
       let dispatchMode = resolveMessageDispatchIntent(
         projection,
         command.dispatchMode,
@@ -5144,6 +5145,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ordinal,
           providerInstanceId: modelSelection.instanceId,
           modelSelection,
+          ...(personaInstructions === undefined ? {} : { personaInstructions }),
           providerThreadId: queuedProviderThread.id,
           userMessageId: command.messageId,
           rootNodeId,

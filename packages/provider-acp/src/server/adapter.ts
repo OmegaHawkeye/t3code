@@ -6405,6 +6405,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const startTurnUnlocked = Effect.fn("AcpAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            // ACP exposes no trusted developer/system instruction channel — its
+            // wrapper only prepends to the user prompt — so persona instructions
+            // cannot be delivered as trusted guidance. Reject rather than silently
+            // downgrade them to untrusted user text. A lower-trust opt-in could
+            // later route them through the wrapper with revision-keyed reinjection.
+            if (turnInput.personaInstructions !== undefined) {
+              return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                driver,
+                threadId: turnInput.threadId,
+                providerThreadId: turnInput.providerThread.id,
+                runId: turnInput.runId,
+                cause: `The ${driver} ACP driver has no trusted instruction channel for persona "${turnInput.personaInstructions.personaName}"; strict trusted-persona execution is not supported on ACP providers.`,
+              });
+            }
             yield* awaitRuntimeTeardown();
             const existing = yield* Ref.get(activeTurn);
             if (existing !== null) {

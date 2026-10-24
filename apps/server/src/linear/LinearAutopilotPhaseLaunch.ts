@@ -4,6 +4,7 @@ import {
   ThreadId,
   type ModelSelection,
   type ProjectId,
+  type ResolvedPersonaInstructions,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -26,6 +27,7 @@ export interface LinearAutopilotReadOnlyLaunchInput {
   readonly projectId: ProjectId;
   readonly baseRef: string;
   readonly modelSelection: ModelSelection;
+  readonly personaInstructions?: ResolvedPersonaInstructions;
   readonly issueIdentifier: string;
   readonly issueTitle: string;
   readonly issueDescription: string;
@@ -37,6 +39,7 @@ export interface LinearAutopilotImplementationLaunchInput {
   readonly projectId: ProjectId;
   readonly baseRef: string;
   readonly modelSelection: ModelSelection;
+  readonly personaInstructions?: ResolvedPersonaInstructions;
   readonly issueIdentifier: string;
   readonly issueTitle: string;
   readonly issueDescription: string;
@@ -50,6 +53,7 @@ export interface LinearAutopilotFollowUpInput {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly modelSelection: ModelSelection;
+  readonly personaInstructions?: ResolvedPersonaInstructions;
   readonly instruction: string;
 }
 
@@ -123,6 +127,9 @@ const make = Effect.gen(function* () {
           projectId: input.projectId,
           title,
           modelSelection: input.modelSelection,
+          ...(input.personaInstructions === undefined
+            ? {}
+            : { personaInstructions: input.personaInstructions }),
           runtimeMode: "approval-required",
           interactionMode: "plan",
           workspaceStrategy: {
@@ -184,6 +191,9 @@ const make = Effect.gen(function* () {
           projectId: input.projectId,
           title: `${input.issueIdentifier}: Implementation`,
           modelSelection: input.modelSelection,
+          ...(input.personaInstructions === undefined
+            ? {}
+            : { personaInstructions: input.personaInstructions }),
           runtimeMode: "approval-required",
           interactionMode: "default",
           workspaceStrategy: {
@@ -236,6 +246,9 @@ const make = Effect.gen(function* () {
         text: input.instruction,
         attachments: [],
         modelSelection: input.modelSelection,
+        ...(input.personaInstructions === undefined
+          ? {}
+          : { personaInstructions: input.personaInstructions }),
         mode: "auto",
         createdBy: "system",
         creationSource: "server",

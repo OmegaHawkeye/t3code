@@ -113,6 +113,42 @@ it.effect(
   },
 );
 
+it.effect("forwards per-phase persona instructions to the launch", () => {
+  const setup = harness();
+  const personaInstructions = {
+    personaName: "independent-planner",
+    revision: "rev-1",
+    text: "Plan conservatively; keep scope tight.",
+  };
+  return Effect.gen(function* () {
+    const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+    yield* intake.ingest({
+      eventId: null,
+      workspaceId: "workspace-1",
+      issueId: "issue-1",
+      identifier: "OME-223",
+      title: "Build Linear autopilot",
+      url: "https://linear.app/ome/issue/OME-223",
+      description: "desc",
+      projectId: input.projectId,
+      sourceUpdatedAt: DateTime.formatIso(now),
+      observedAt: DateTime.formatIso(now),
+    });
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    const { run } = yield* runs.createOrGetActive({
+      workspaceId: "workspace-1",
+      issueId: "issue-1",
+      projectId: input.projectId,
+      sourceUpdatedAt: now,
+      snapshotHash: "a".repeat(64),
+      createdAt: now,
+    });
+    const phases = yield* LinearAutopilotPhaseLaunch.LinearAutopilotPhaseLaunch;
+    yield* phases.launchReadOnly({ ...input, runId: run.runId, personaInstructions });
+    assert.deepStrictEqual(setup.launches[0]?.personaInstructions, personaInstructions);
+  }).pipe(Effect.provide(setup.layer));
+});
+
 it.effect("launches approved implementation in a fresh approval-required worktree", () => {
   const setup = harness();
   return Effect.gen(function* () {
