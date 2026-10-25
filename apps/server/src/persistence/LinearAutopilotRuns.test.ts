@@ -47,6 +47,44 @@ const seedIssue = (issueId: string) =>
   });
 
 layer("LinearAutopilotRunRepository", (it) => {
+  it.effect("pins the workflow snapshot on the run across transitions and reloads", () =>
+    Effect.gen(function* () {
+      const input = { ...runInput("issue-workflow-snapshot"), workflowJson: '{"nodeId":"plan"}' };
+      yield* seedIssue(input.issueId);
+      const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+      const { run } = yield* runs.createOrGetActive(input);
+      assert.equal(run.workflowJson, input.workflowJson);
+      assert.isTrue(
+        yield* runs.transition({
+          runId: run.runId,
+          expectedRevision: run.revision,
+          nextState: "planning",
+          updatedAt: now,
+          workflowJson: input.workflowJson,
+        }),
+      );
+      assert.equal((yield* runs.getById(run.runId))?.workflowJson, input.workflowJson);
+      const checkpoint = '{"nodeId":"review"}';
+      assert.isTrue(
+        yield* runs.checkpointWorkflow({
+          runId: run.runId,
+          expectedRevision: 1,
+          workflowJson: checkpoint,
+          updatedAt: now,
+        }),
+      );
+      assert.equal((yield* runs.getById(run.runId))?.workflowJson, checkpoint);
+      assert.isFalse(
+        yield* runs.checkpointWorkflow({
+          runId: run.runId,
+          expectedRevision: 1,
+          workflowJson: checkpoint,
+          updatedAt: now,
+        }),
+      );
+    }),
+  );
+
   it.effect("returns the active generation and permits only valid revisioned transitions", () =>
     Effect.gen(function* () {
       const input = runInput("issue-transitions");

@@ -45,6 +45,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { LinearAutopilotWorkflow } from "./linearAutopilotWorkflow.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1088,6 +1089,10 @@ export const LinearAutopilotSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   projectMappings: Schema.Record(TrimmedNonEmptyString, ProjectId).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /** Optional project-specific workflow definitions; absent projects use the built-in default. */
+  workflows: Schema.Record(ProjectId, LinearAutopilotWorkflow).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   clientId: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),

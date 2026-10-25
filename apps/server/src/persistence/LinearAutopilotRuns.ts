@@ -48,6 +48,7 @@ export const LinearAutopilotRun = Schema.Struct({
   approvalProjectId: Schema.NullOr(ProjectId),
   approvalBaseRef: Schema.NullOr(Schema.String),
   baseRef: Schema.NullOr(Schema.String),
+  workflowJson: Schema.NullOr(Schema.String),
   approvedBy: Schema.NullOr(Schema.String),
   approvedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
@@ -70,6 +71,7 @@ const NewRun = Schema.Struct({
   generation: Schema.Int,
   sourceUpdatedAt: Schema.DateTimeUtcFromString,
   snapshotHash: Schema.String,
+  workflowJson: Schema.optional(Schema.String.check(Schema.isMaxLength(100_000))),
   createdAt: Schema.DateTimeUtcFromString,
 });
 const RecoverableRunsRequest = Schema.Struct({
@@ -87,6 +89,7 @@ const TransitionRequest = Schema.Struct({
   approvalProjectId: Schema.optional(Schema.NullOr(ProjectId)),
   approvalBaseRef: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(255)))),
   baseRef: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(255)))),
+  workflowJson: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(100_000)))),
 });
 const ApprovalRequest = Schema.Struct({
   runId: Schema.String,
@@ -97,6 +100,12 @@ const ApprovalRequest = Schema.Struct({
   baseRef: Schema.String.check(Schema.isMaxLength(255)),
   approvedBy: Schema.String.check(Schema.isMaxLength(128)),
   approvedAt: Schema.DateTimeUtcFromString,
+});
+const WorkflowCheckpointRequest = Schema.Struct({
+  runId: Schema.String,
+  expectedRevision: Schema.Int,
+  workflowJson: Schema.String.check(Schema.isMaxLength(100_000)),
+  updatedAt: Schema.DateTimeUtcFromString,
 });
 const RunIdCodec = Schema.fromJsonString(
   Schema.toCodecJson(
@@ -109,7 +118,7 @@ const allowedTransitions: Readonly<
 > = {
   queued: ["planning", "paused", "cancelled"],
   planning: ["reviewing", "paused", "failed", "cancelled"],
-  reviewing: ["needs_approval", "paused", "failed", "cancelled"],
+  reviewing: ["planning", "needs_approval", "paused", "failed", "cancelled"],
   needs_approval: ["approved", "paused", "cancelled"],
   approved: ["implementing", "paused", "cancelled"],
   implementing: ["verifying", "paused", "failed", "cancelled"],
@@ -131,6 +140,7 @@ export class LinearAutopilotRunRepository extends Context.Service<
       readonly projectId: ProjectId;
       readonly sourceUpdatedAt: DateTime.Utc;
       readonly snapshotHash: string;
+      readonly workflowJson?: string;
       readonly createdAt: DateTime.Utc;
     }) => Effect.Effect<
       { readonly run: LinearAutopilotRun; readonly created: boolean },
@@ -145,6 +155,10 @@ export class LinearAutopilotRunRepository extends Context.Service<
     /** Returns false when the revision is stale or the transition is not allowed. */
     readonly transition: (
       input: typeof TransitionRequest.Type,
+    ) => Effect.Effect<boolean, PersistenceSqlError>;
+    /** Atomically persists a next-node cursor or loop-budget update without changing run state. */
+    readonly checkpointWorkflow: (
+      input: typeof WorkflowCheckpointRequest.Type,
     ) => Effect.Effect<boolean, PersistenceSqlError>;
     /** Approval is accepted only for the exact plan and policy revision awaiting review. */
     readonly approve: (
@@ -179,6 +193,7 @@ const make = Effect.gen(function* () {
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
         base_ref AS "baseRef",
+        workflow_json AS "workflowJson",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -214,6 +229,7 @@ const make = Effect.gen(function* () {
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
         base_ref AS "baseRef",
+        workflow_json AS "workflowJson",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -244,6 +260,7 @@ const make = Effect.gen(function* () {
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
         base_ref AS "baseRef",
+        workflow_json AS "workflowJson",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -267,14 +284,15 @@ const make = Effect.gen(function* () {
       generation,
       sourceUpdatedAt,
       snapshotHash,
+      workflowJson,
       createdAt,
     }) => sql`
       INSERT INTO linear_autopilot_runs (
         run_id, source_kind, workspace_id, issue_id, project_id, generation, state,
-        source_updated_at, snapshot_hash, created_at, updated_at
+        source_updated_at, snapshot_hash, workflow_json, created_at, updated_at
       ) VALUES (
         ${runId}, ${source}, ${workspaceId}, ${issueId}, ${projectId}, ${generation}, 'queued',
-        ${sourceUpdatedAt}, ${snapshotHash}, ${createdAt}, ${createdAt}
+        ${sourceUpdatedAt}, ${snapshotHash}, ${workflowJson ?? null}, ${createdAt}, ${createdAt}
       )
       RETURNING
         run_id AS "runId",
@@ -294,6 +312,7 @@ const make = Effect.gen(function* () {
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
         base_ref AS "baseRef",
+        workflow_json AS "workflowJson",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -323,6 +342,7 @@ const make = Effect.gen(function* () {
         approval_project_id AS "approvalProjectId",
         approval_base_ref AS "approvalBaseRef",
         base_ref AS "baseRef",
+        workflow_json AS "workflowJson",
         approved_by AS "approvedBy",
         approved_at AS "approvedAt",
         created_at AS "createdAt",
@@ -349,6 +369,7 @@ const make = Effect.gen(function* () {
       approvalProjectId,
       approvalBaseRef,
       baseRef,
+      workflowJson,
     }) => sql`
       UPDATE linear_autopilot_runs
       SET state = ${nextState},
@@ -381,6 +402,7 @@ const make = Effect.gen(function* () {
             WHEN ${nextState} = 'planning' THEN COALESCE(${baseRef ?? null}, base_ref)
             ELSE base_ref
           END,
+          workflow_json = COALESCE(${workflowJson ?? null}, workflow_json),
           approved_by = CASE WHEN ${nextState} IN ('queued', 'planning') THEN NULL ELSE approved_by END,
           approved_at = CASE WHEN ${nextState} IN ('queued', 'planning') THEN NULL ELSE approved_at END
       WHERE run_id = ${runId} AND revision = ${expectedRevision}
@@ -414,6 +436,18 @@ const make = Effect.gen(function* () {
         AND approval_policy_version = ${policyVersion}
         AND approval_project_id = ${projectId}
         AND approval_base_ref = ${baseRef}
+      RETURNING run_id AS "runId"
+    `,
+  });
+
+  const updateWorkflowCheckpoint = SqlSchema.findAll({
+    Request: WorkflowCheckpointRequest,
+    Result: Schema.Struct({ runId: Schema.String }),
+    execute: ({ runId, expectedRevision, workflowJson, updatedAt }) => sql`
+      UPDATE linear_autopilot_runs
+      SET workflow_json = ${workflowJson}, revision = revision + 1, updated_at = ${updatedAt}
+      WHERE run_id = ${runId} AND revision = ${expectedRevision}
+        AND state NOT IN ('delivered', 'failed', 'cancelled')
       RETURNING run_id AS "runId"
     `,
   });
@@ -512,6 +546,11 @@ const make = Effect.gen(function* () {
       approveRun(input).pipe(
         Effect.map((rows) => rows.length > 0),
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.approve:query")),
+      ),
+    checkpointWorkflow: (input) =>
+      updateWorkflowCheckpoint(input).pipe(
+        Effect.map((rows) => rows.length > 0),
+        Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.checkpointWorkflow:query")),
       ),
   });
 });

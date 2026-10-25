@@ -24,6 +24,7 @@ const summarizeFailure = (error: unknown): string => {
 export interface LinearAutopilotReadOnlyLaunchInput {
   readonly runId: string;
   readonly phase: "planning" | "review";
+  readonly attemptNumber?: number;
   readonly projectId: ProjectId;
   readonly baseRef: string;
   readonly modelSelection: ModelSelection;
@@ -100,7 +101,10 @@ const make = Effect.gen(function* () {
 
   const launchReadOnly: LinearAutopilotPhaseLaunch["Service"]["launchReadOnly"] = (input) =>
     Effect.gen(function* () {
-      const commandId = CommandId.make(`linear-autopilot:${input.runId}:${input.phase}:1`);
+      const attemptNumber = input.attemptNumber ?? 1;
+      const commandId = CommandId.make(
+        `linear-autopilot:${input.runId}:${input.phase}:${attemptNumber}`,
+      );
       const startedAt = yield* DateTime.now;
       const { attempt } = yield* attempts.begin({
         runId: input.runId,

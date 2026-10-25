@@ -113,6 +113,7 @@ describe("runMigrations", () => {
       assert.deepStrictEqual(yield* runMigrations(), [
         [64, "CanonicalizeThreadPullRequestLinks"],
         [73, "AutopilotTicketSources"],
+        [74, "LinearAutopilotWorkflowSnapshot"],
       ]);
       assert.deepStrictEqual(yield* history, migrationManifest);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
