@@ -9,6 +9,7 @@ import {
   type LinearAutopilotWorkflowOutcome,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 const nodeOutcomes: Record<
@@ -17,7 +18,7 @@ const nodeOutcomes: Record<
 > = {
   plan: ["done"],
   review: ["approve", "revise"],
-  implement: ["done"],
+  implement: ["done", "verify-fail"],
   merge: ["ci-pass", "ci-fail"],
 };
 
@@ -27,6 +28,29 @@ const workflowExecutionJson = Schema.fromJsonString(
 
 const nodeById = (workflow: LinearAutopilotWorkflow, id: string) =>
   workflow.nodes.find((node) => node.id === id);
+
+const failWorkflow = (message: string): never => {
+  throw new LinearAutopilotWorkflowError({ message });
+};
+
+export class LinearAutopilotWorkflowError extends Schema.TaggedError<LinearAutopilotWorkflowError>()(
+  "LinearAutopilotWorkflowError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
+const isLinearAutopilotWorkflowError = Schema.is(LinearAutopilotWorkflowError);
+
+export const effect = <A>(evaluate: () => A): Effect.Effect<A, LinearAutopilotWorkflowError> =>
+  Effect.try({
+    try: evaluate,
+    catch: (cause) =>
+      isLinearAutopilotWorkflowError(cause)
+        ? cause
+        : new LinearAutopilotWorkflowError({
+            message: "A workflow definition or execution snapshot is invalid.",
+            cause,
+          }),
+  });
 
 const reachableFrom = (
   workflow: LinearAutopilotWorkflow,
@@ -70,7 +94,7 @@ export const resumeLinearAutopilotWorkflow = (
 ): LinearAutopilotWorkflowExecution => {
   validateLinearAutopilotWorkflow(definition);
   if (nodeId !== "end" && nodeById(definition, nodeId) === undefined) {
-    throw new Error(`Workflow cursor references missing node "${nodeId}".`);
+    failWorkflow(`Workflow cursor references missing node "${nodeId}".`);
   }
   return { version: 1, definition, nodeId, traversals: {} };
 };
@@ -78,13 +102,21 @@ export const resumeLinearAutopilotWorkflow = (
 export const decodeLinearAutopilotWorkflowExecution = (
   serialized: string,
 ): LinearAutopilotWorkflowExecution => {
-  const execution = Schema.decodeSync(workflowExecutionJson)(serialized);
+  let execution: LinearAutopilotWorkflowExecution;
+  try {
+    execution = Schema.decodeSync(workflowExecutionJson)(serialized);
+  } catch (cause) {
+    throw new LinearAutopilotWorkflowError({
+      message: "The persisted workflow execution could not be decoded.",
+      cause,
+    });
+  }
   validateLinearAutopilotWorkflow(execution.definition);
   if (
     execution.nodeId !== "end" &&
     nodeById(execution.definition, execution.nodeId) === undefined
   ) {
-    throw new Error(`Workflow cursor references missing node "${execution.nodeId}".`);
+    failWorkflow(`Workflow cursor references missing node "${execution.nodeId}".`);
   }
   return execution;
 };
@@ -102,7 +134,7 @@ export const advanceLinearAutopilotWorkflow = (
     (candidate) => candidate.from === state.nodeId && candidate.on === outcome,
   );
   if (edge === undefined)
-    throw new Error(`Workflow node "${state.nodeId}" cannot emit "${outcome}".`);
+    return failWorkflow(`Workflow node "${state.nodeId}" cannot emit "${outcome}".`);
   const key = edgeKey(edge);
   const traversals = state.traversals[key] ?? 0;
   if (edge.budget !== undefined && traversals >= edge.budget) {
@@ -143,52 +175,52 @@ export const validateLinearAutopilotWorkflow = (workflow: LinearAutopilotWorkflo
   const label = `Workflow "${workflow.id}"`;
   const ids = new Set<string>();
   for (const node of workflow.nodes) {
-    if (node.id === "end") throw new Error(`${label}: "end" is reserved for termination.`);
-    if (ids.has(node.id)) throw new Error(`${label}: duplicate node id "${node.id}".`);
+    if (node.id === "end") failWorkflow(`${label}: "end" is reserved for termination.`);
+    if (ids.has(node.id)) failWorkflow(`${label}: duplicate node id "${node.id}".`);
     ids.add(node.id);
   }
   if (!ids.has(workflow.entry))
-    throw new Error(`${label}: entry node "${workflow.entry}" is missing.`);
+    failWorkflow(`${label}: entry node "${workflow.entry}" is missing.`);
   if (nodeById(workflow, workflow.entry)?.kind !== "plan") {
-    throw new Error(`${label}: the entry node must use the plan behavior.`);
+    failWorkflow(`${label}: the entry node must use the plan behavior.`);
   }
   for (const edge of workflow.edges) {
-    if (!ids.has(edge.from)) throw new Error(`${label}: edge source "${edge.from}" is missing.`);
+    if (!ids.has(edge.from)) failWorkflow(`${label}: edge source "${edge.from}" is missing.`);
     if (edge.to !== "end" && !ids.has(edge.to)) {
-      throw new Error(`${label}: edge target "${edge.to}" is missing.`);
+      failWorkflow(`${label}: edge target "${edge.to}" is missing.`);
     }
   }
 
   const reachable = reachableFrom(workflow, workflow.entry);
   for (const node of workflow.nodes) {
-    if (!reachable.has(node.id)) throw new Error(`${label}: node "${node.id}" is unreachable.`);
+    if (!reachable.has(node.id)) failWorkflow(`${label}: node "${node.id}" is unreachable.`);
     const outgoing = workflow.edges.filter((edge) => edge.from === node.id);
     if (outgoing.some((edge) => edge.on === "blocked")) {
-      throw new Error(`${label}: blocked outcomes are coordinator-handled and cannot have edges.`);
+      failWorkflow(`${label}: blocked outcomes are coordinator-handled and cannot have edges.`);
     }
     const allowed = nodeOutcomes[node.kind];
-    if (allowed === undefined) throw new Error(`${label}: unsupported node kind "${node.kind}".`);
+    if (allowed === undefined) failWorkflow(`${label}: unsupported node kind "${node.kind}".`);
     const allowedOutcomes = new Set<string>(allowed);
     for (const outcome of allowed) {
       if (outgoing.filter((edge) => edge.on === outcome).length !== 1) {
-        throw new Error(`${label}: node "${node.id}" needs exactly one "${outcome}" edge.`);
+        failWorkflow(`${label}: node "${node.id}" needs exactly one "${outcome}" edge.`);
       }
     }
     if (outgoing.some((edge) => !allowedOutcomes.has(edge.on))) {
-      throw new Error(`${label}: node "${node.id}" has an outcome its kind cannot emit.`);
+      failWorkflow(`${label}: node "${node.id}" has an outcome its kind cannot emit.`);
     }
     if (new Set(outgoing.map((edge) => edge.on)).size !== outgoing.length) {
-      throw new Error(`${label}: node "${node.id}" has multiple edges for one outcome.`);
+      failWorkflow(`${label}: node "${node.id}" has multiple edges for one outcome.`);
     }
     if (node.kind === "merge" && node.persona !== undefined) {
-      throw new Error(`${label}: merge gate nodes use the built-in protected delivery behavior.`);
+      failWorkflow(`${label}: merge gate nodes use the built-in protected delivery behavior.`);
     }
     if (
       workflow.id !== defaultLinearAutopilotWorkflow.id &&
       node.kind !== "merge" &&
       node.persona === undefined
     ) {
-      throw new Error(`${label}: node "${node.id}" needs an explicit persona runtime profile.`);
+      failWorkflow(`${label}: node "${node.id}" needs an explicit persona runtime profile.`);
     }
   }
 
@@ -196,24 +228,32 @@ export const validateLinearAutopilotWorkflow = (workflow: LinearAutopilotWorkflo
   for (const edge of workflow.edges) {
     const isLoop = loops.has(edge);
     if (isLoop && edge.budget === undefined) {
-      throw new Error(`${label}: loop edge ${edge.from} → ${edge.to} needs a traversal budget.`);
+      failWorkflow(`${label}: loop edge ${edge.from} → ${edge.to} needs a traversal budget.`);
     }
     if (!isLoop && edge.budget !== undefined) {
-      throw new Error(`${label}: non-loop edge ${edge.from} → ${edge.to} cannot have a budget.`);
+      failWorkflow(`${label}: non-loop edge ${edge.from} → ${edge.to} cannot have a budget.`);
     }
   }
 
   if (edgesToEnd(workflow).length === 0)
-    throw new Error(`${label}: at least one terminal edge is required.`);
-  const canTerminate = (id: string, path: Set<string>): boolean => {
-    if (path.has(id)) return false;
+    failWorkflow(`${label}: at least one terminal edge is required.`);
+  const firstNonTerminatingNode = (id: string, path: Set<string>): string | undefined => {
+    if (path.has(id)) return id;
     const outgoing = workflow.edges.filter((edge) => edge.from === id && !loops.has(edge));
-    if (outgoing.length === 0) return false;
+    if (outgoing.length === 0) return id;
     const nextPath = new Set(path).add(id);
-    return outgoing.every((edge) => edge.to === "end" || canTerminate(edge.to, nextPath));
+    for (const edge of outgoing) {
+      if (edge.to === "end") continue;
+      const nonTerminatingNode = firstNonTerminatingNode(edge.to, nextPath);
+      if (nonTerminatingNode !== undefined) return nonTerminatingNode;
+    }
+    return undefined;
   };
-  if (!canTerminate(workflow.entry, new Set())) {
-    throw new Error(`${label}: every path must reach a terminal edge after its bounded loops.`);
+  const nonTerminatingNode = firstNonTerminatingNode(workflow.entry, new Set());
+  if (nonTerminatingNode !== undefined) {
+    failWorkflow(
+      `${label}: path through node "${nonTerminatingNode}" cannot reach a terminal edge after its bounded loops.`,
+    );
   }
 
   for (const author of workflow.nodes) {
@@ -226,72 +266,37 @@ export const validateLinearAutopilotWorkflow = (workflow: LinearAutopilotWorkflo
         downstream.has(reviewer.id) &&
         modelSelectionsEqual(author.persona.modelSelection, reviewer.persona.modelSelection)
       ) {
-        throw new Error(`${label}: planner and reviewer resolve to the same model identity.`);
+        failWorkflow(`${label}: planner and reviewer resolve to the same model identity.`);
       }
     }
   }
 
-  const mergeNodes = workflow.nodes.filter((node) => node.kind === "merge");
-  const planNodes = workflow.nodes.filter((node) => node.kind === "plan");
-  const reviewNodes = workflow.nodes.filter((node) => node.kind === "review");
-  const implementationNodes = workflow.nodes.filter((node) => node.kind === "implement");
-  if (
-    planNodes.length !== 1 ||
-    reviewNodes.length !== 1 ||
-    implementationNodes.length !== 1 ||
-    mergeNodes.length !== 1
-  ) {
-    throw new Error(
-      `${label}: v1 supports one each of plan, review, implement, and merge behaviors.`,
-    );
-  }
   if (
     edgesToEnd(workflow).some(
       (edge) => nodeById(workflow, edge.from)?.kind !== "merge" || edge.on !== "ci-pass",
     )
   ) {
-    throw new Error(`${label}: only a passing merge gate may terminate the workflow.`);
+    failWorkflow(`${label}: only a passing merge gate may terminate the workflow.`);
   }
-  const [plan] = planNodes;
-  const [review] = reviewNodes;
-  const [implement] = implementationNodes;
-  const [merge] = mergeNodes;
-  const edgeTargets = [
-    {
-      edge: workflow.edges.find(
-        (candidate) => candidate.from === plan?.id && candidate.on === "done",
-      ),
-      target: review?.id,
-    },
-    {
-      edge: workflow.edges.find(
-        (candidate) => candidate.from === review?.id && candidate.on === "approve",
-      ),
-      target: implement?.id,
-    },
-    {
-      edge: workflow.edges.find(
-        (candidate) => candidate.from === review?.id && candidate.on === "revise",
-      ),
-      target: plan?.id,
-    },
-    {
-      edge: workflow.edges.find(
-        (candidate) => candidate.from === implement?.id && candidate.on === "done",
-      ),
-      target: merge?.id,
-    },
-    {
-      edge: workflow.edges.find(
-        (candidate) => candidate.from === merge?.id && candidate.on === "ci-fail",
-      ),
-      target: implement?.id,
-    },
-  ];
-  if (edgeTargets.some(({ edge, target }) => edge?.to !== target)) {
-    throw new Error(
-      `${label}: v1 routes plan → review → implementation → merge; revise and CI failure use bounded loops.`,
-    );
+  for (const node of workflow.nodes) {
+    const targetKind = (edge: LinearAutopilotWorkflowEdge) =>
+      edge.to === "end" ? "end" : nodeById(workflow, edge.to)?.kind;
+    for (const edge of workflow.edges.filter((candidate) => candidate.from === node.id)) {
+      const target = targetKind(edge);
+      const safeTarget =
+        (node.kind === "plan" && target === "review") ||
+        (node.kind === "review" && edge.on === "approve" && target === "implement") ||
+        (node.kind === "review" && edge.on === "revise" && target === "plan") ||
+        (node.kind === "implement" && edge.on === "done" && target === "merge") ||
+        (node.kind === "implement" && edge.on === "verify-fail" && target === "implement") ||
+        (node.kind === "merge" && edge.on === "ci-pass" && target === "end") ||
+        (node.kind === "merge" && edge.on === "ci-fail" && target === "implement");
+      if (!safeTarget) {
+        failWorkflow(
+          `${label}: edge ${node.id} --${edge.on}--> ${edge.to} violates phase gate order.`,
+        );
+      }
+    }
   }
 
   // Every terminating route must cross each safety gate, and in order.
@@ -301,7 +306,7 @@ export const validateLinearAutopilotWorkflow = (workflow: LinearAutopilotWorkflo
     );
     const reachableWithoutGate = reachableFrom(workflow, workflow.entry, withoutGate);
     if (workflow.edges.some((edge) => edge.to === "end" && reachableWithoutGate.has(edge.from))) {
-      throw new Error(`${label}: a path can reach termination without passing the ${kind} gate.`);
+      failWorkflow(`${label}: a path can reach termination without passing the ${kind} gate.`);
     }
   }
   const beforeReview = reachableFrom(
@@ -310,7 +315,7 @@ export const validateLinearAutopilotWorkflow = (workflow: LinearAutopilotWorkflo
     new Set(workflow.nodes.filter((node) => node.kind === "review").map((node) => node.id)),
   );
   if (workflow.nodes.some((node) => node.kind === "implement" && beforeReview.has(node.id))) {
-    throw new Error(`${label}: implementation must follow plan review and approval.`);
+    failWorkflow(`${label}: implementation must follow plan review and approval.`);
   }
   const beforeImplement = reachableFrom(
     workflow,
@@ -318,7 +323,7 @@ export const validateLinearAutopilotWorkflow = (workflow: LinearAutopilotWorkflo
     new Set(workflow.nodes.filter((node) => node.kind === "implement").map((node) => node.id)),
   );
   if (workflow.nodes.some((node) => node.kind === "merge" && beforeImplement.has(node.id))) {
-    throw new Error(`${label}: delivery must follow implementation and evidence checks.`);
+    failWorkflow(`${label}: delivery must follow implementation and evidence checks.`);
   }
 };
 

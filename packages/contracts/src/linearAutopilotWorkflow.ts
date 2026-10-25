@@ -17,6 +17,7 @@ export type LinearAutopilotWorkflowNodeKind = typeof LinearAutopilotWorkflowNode
 
 export const LinearAutopilotWorkflowOutcome = Schema.Literals([
   "done",
+  "verify-fail",
   "approve",
   "revise",
   "ci-pass",
@@ -89,6 +90,7 @@ export const defaultLinearAutopilotWorkflow: LinearAutopilotWorkflow = {
     { from: "review", on: "approve", to: "implement" },
     { from: "review", on: "revise", to: "plan", budget: 0 },
     { from: "implement", on: "done", to: "merge" },
+    { from: "implement", on: "verify-fail", to: "implement", budget: 2 },
     { from: "merge", on: "ci-pass", to: "end" },
     { from: "merge", on: "ci-fail", to: "implement", budget: 1 },
   ],

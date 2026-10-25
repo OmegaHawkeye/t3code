@@ -519,7 +519,12 @@ it.effect("records explicit passing verification before entering delivery", () =
     const result = yield* reconciler.reconcile();
     assert.equal(result.phasesCompleted, 1);
     const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
-    assert.equal((yield* runs.getById(runId))?.state, "delivering");
+    const run = yield* runs.getById(runId);
+    assert.equal(run?.state, "delivering");
+    const execution = LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(
+      run?.workflowJson ?? "",
+    );
+    assert.equal(execution.nodeId, "merge");
   }).pipe(Effect.provide(setup.layer));
 });
 
@@ -551,6 +556,12 @@ it.effect("uses a bounded repair follow-up after verification failure", () => {
     assert.equal(repair.attemptNumber, 1);
     assert.include(repair.instruction, "pnpm test");
     assert.include(repair.instruction, "Do not commit, push");
+    const run = yield* (yield* LinearAutopilotRuns.LinearAutopilotRunRepository).getById(runId);
+    const execution = LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(
+      run?.workflowJson ?? "",
+    );
+    assert.equal(execution.nodeId, "implement");
+    assert.deepEqual(Object.values(execution.traversals), [1]);
   }).pipe(Effect.provide(setup.layer));
 });
 

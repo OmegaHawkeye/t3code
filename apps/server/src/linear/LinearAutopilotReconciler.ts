@@ -29,7 +29,6 @@ import type { LinearAutopilotSettings, ServerSettingsError } from "@t3tools/cont
 
 const APPROVAL_POLICY_VERSION = "human-review-v1";
 const MAX_PHASE_SUMMARY_LENGTH = 4000;
-const MAX_IMPLEMENTATION_REPAIR_ROUNDS = 2;
 
 export interface LinearAutopilotReconcileResult {
   readonly runsChecked: number;
@@ -54,6 +53,7 @@ export class LinearAutopilotReconciler extends Context.Service<
       | ThreadManagementErrors.ThreadManagementError
       | Orchestrator.OrchestratorV2Error
       | PullRequestService.PullRequestError
+      | LinearAutopilotWorkflow.LinearAutopilotWorkflowError
       | PlatformError.PlatformError
     >;
   }
@@ -314,33 +314,11 @@ const make = Effect.gen(function* () {
         }
 
         if (run.state === "implementing" && attempt?.status === "succeeded") {
-          const workflowExecution =
-            run.workflowJson === null
-              ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
-                  LinearAutopilotWorkflow.defaultWorkflow,
-                  "implement",
-                )
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson);
-          const next = LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
-            workflowExecution,
-            "done",
-          );
-          if (
-            next._tag !== "advanced" ||
-            LinearAutopilotWorkflow.workflowNode(next.state.definition, next.state.nodeId)?.kind !==
-              "merge"
-          ) {
-            deferred += 1;
-            continue;
-          }
           yield* runs.transition({
             runId: run.runId,
             expectedRevision: run.revision,
             nextState: "verifying",
             updatedAt: yield* DateTime.now,
-            workflowJson: LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(
-              next.state,
-            ),
           });
           continue;
         }
@@ -400,10 +378,7 @@ const make = Effect.gen(function* () {
               if (!launched) deferred += 1;
               continue;
             }
-            if (
-              repair?.status === "failed" ||
-              (repair?.attemptNumber ?? 0) >= MAX_IMPLEMENTATION_REPAIR_ROUNDS
-            ) {
+            if (repair?.status === "failed") {
               const transitioned = yield* runs.transition({
                 runId: run.runId,
                 expectedRevision: run.revision,
@@ -415,6 +390,48 @@ const make = Effect.gen(function* () {
                 yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
               continue;
             }
+            const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+              run.workflowJson === null
+                ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
+                    LinearAutopilotWorkflow.defaultWorkflow,
+                    "implement",
+                  )
+                : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+            );
+            const retry = yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
+                workflowExecution,
+                "verify-fail",
+              ),
+            );
+            const retryNode =
+              retry._tag === "advanced"
+                ? LinearAutopilotWorkflow.workflowNode(retry.state.definition, retry.state.nodeId)
+                : undefined;
+            if (retry._tag !== "advanced" || retryNode?.kind !== "implement") {
+              const transitioned = yield* runs.transition({
+                runId: run.runId,
+                expectedRevision: run.revision,
+                nextState: "paused",
+                updatedAt: yield* DateTime.now,
+              });
+              const autopilot = currentSettings.linearAutopilot;
+              if (transitioned)
+                yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
+              continue;
+            }
+            const checkpointed = yield* runs.checkpointWorkflow({
+              runId: run.runId,
+              expectedRevision: run.revision,
+              workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(retry.state),
+              ),
+              updatedAt: yield* DateTime.now,
+            });
+            if (!checkpointed) {
+              deferred += 1;
+              continue;
+            }
             const launched = yield* launchImplementationFollowUp(
               run,
               "repair",
@@ -424,11 +441,33 @@ const make = Effect.gen(function* () {
             if (!launched) deferred += 1;
             continue;
           }
+          const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+            run.workflowJson === null
+              ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
+                  LinearAutopilotWorkflow.defaultWorkflow,
+                  "implement",
+                )
+              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+          );
+          const next = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "done"),
+          );
+          if (
+            next._tag !== "advanced" ||
+            LinearAutopilotWorkflow.workflowNode(next.state.definition, next.state.nodeId)?.kind !==
+              "merge"
+          ) {
+            deferred += 1;
+            continue;
+          }
           yield* runs.transition({
             runId: run.runId,
             expectedRevision: run.revision,
             nextState: "delivering",
             updatedAt: yield* DateTime.now,
+            workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(next.state),
+            ),
           });
           continue;
         }
@@ -502,13 +541,14 @@ const make = Effect.gen(function* () {
               yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
             continue;
           }
-          let workflowExecution =
+          let workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
             run.workflowJson === null
               ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
                   LinearAutopilotWorkflow.defaultWorkflow,
                   "merge",
                 )
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson);
+              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+          );
           if (
             attempt.attemptNumber > 1 &&
             LinearAutopilotWorkflow.workflowNode(
@@ -516,9 +556,8 @@ const make = Effect.gen(function* () {
               workflowExecution.nodeId,
             )?.kind === "implement"
           ) {
-            const merge = LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
-              workflowExecution,
-              "done",
+            const merge = yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "done"),
             );
             if (
               merge._tag !== "advanced" ||
@@ -531,8 +570,8 @@ const make = Effect.gen(function* () {
             const checkpointed = yield* runs.checkpointWorkflow({
               runId: run.runId,
               expectedRevision: run.revision,
-              workflowJson: LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(
-                merge.state,
+              workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(merge.state),
               ),
               updatedAt: yield* DateTime.now,
             });
@@ -545,9 +584,11 @@ const make = Effect.gen(function* () {
           }
           if (pullRequestSummary.checksState !== "passing") {
             if (pullRequestSummary.checksState === "failing") {
-              const retry = LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
-                workflowExecution,
-                "ci-fail",
+              const retry = yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
+                  workflowExecution,
+                  "ci-fail",
+                ),
               );
               const implementNode =
                 retry._tag === "advanced"
@@ -570,8 +611,8 @@ const make = Effect.gen(function* () {
                 const checkpointed = yield* runs.checkpointWorkflow({
                   runId: run.runId,
                   expectedRevision: run.revision,
-                  workflowJson: LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(
-                    retry.state,
+                  workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+                    LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(retry.state),
                   ),
                   updatedAt: yield* DateTime.now,
                 });
@@ -605,9 +646,8 @@ const make = Effect.gen(function* () {
             deferred += 1;
             continue;
           }
-          const completedWorkflow = LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
-            workflowExecution,
-            "ci-pass",
+          const completedWorkflow = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "ci-pass"),
           );
           if (completedWorkflow._tag !== "completed") {
             deferred += 1;
@@ -618,8 +658,10 @@ const make = Effect.gen(function* () {
             expectedRevision: run.revision,
             nextState: "delivered",
             updatedAt: yield* DateTime.now,
-            workflowJson: LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(
-              completedWorkflow.state,
+            workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(
+                completedWorkflow.state,
+              ),
             ),
           });
           const autopilot = currentSettings.linearAutopilot;
@@ -639,15 +681,15 @@ const make = Effect.gen(function* () {
           attempt?.status === "succeeded" &&
           attempt.summary !== null
         ) {
-          const workflowExecution =
+          const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
             run.workflowJson === null
               ? LinearAutopilotWorkflow.startLinearAutopilotWorkflow(
                   LinearAutopilotWorkflow.defaultWorkflow,
                 )
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson);
-          const next = LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
-            workflowExecution,
-            "done",
+              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+          );
+          const next = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "done"),
           );
           if (
             next._tag !== "advanced" ||
@@ -662,8 +704,8 @@ const make = Effect.gen(function* () {
             expectedRevision: run.revision,
             nextState: "reviewing",
             updatedAt: yield* DateTime.now,
-            workflowJson: LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(
-              next.state,
+            workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(next.state),
             ),
           });
           if (!transitioned) {
@@ -690,7 +732,7 @@ const make = Effect.gen(function* () {
         if (reviewAttempt === null) {
           const projectId = run.projectId;
           const baseRef = run.baseRef;
-          const workflowExecution =
+          const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
             run.workflowJson === null
               ? LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
                   LinearAutopilotWorkflow.startLinearAutopilotWorkflow(
@@ -698,7 +740,8 @@ const make = Effect.gen(function* () {
                   ),
                   "done",
                 ).state
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson);
+              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+          );
           const reviewNode = LinearAutopilotWorkflow.workflowNode(
             workflowExecution.definition,
             workflowExecution.nodeId,
@@ -766,16 +809,16 @@ const make = Effect.gen(function* () {
           continue;
         }
         if (verdict === "REVISE") {
-          const workflowExecution =
+          const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
             run.workflowJson === null
               ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
                   LinearAutopilotWorkflow.defaultWorkflow,
                   "review",
                 )
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson);
-          const retry = LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
-            workflowExecution,
-            "revise",
+              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+          );
+          const retry = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "revise"),
           );
           const planNode =
             retry._tag === "advanced"
@@ -809,8 +852,8 @@ const make = Effect.gen(function* () {
               expectedRevision: run.revision,
               nextState: "planning",
               updatedAt: yield* DateTime.now,
-              workflowJson: LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(
-                retry.state,
+              workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(retry.state),
               ),
             });
             if (!transitioned) {

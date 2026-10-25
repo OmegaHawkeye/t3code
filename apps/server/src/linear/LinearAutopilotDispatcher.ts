@@ -48,6 +48,7 @@ export class LinearAutopilotDispatcher extends Context.Service<
       | ThreadLaunchTypes.ThreadLaunchError
       | ThreadLaunchTypes.ThreadLaunchBaseRefError
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+      | LinearAutopilotWorkflow.LinearAutopilotWorkflowError
     >;
     /** Starts only human-approved runs after rechecking their persisted plan hash and binding. */
     readonly dispatchApproved: (
@@ -60,6 +61,7 @@ export class LinearAutopilotDispatcher extends Context.Service<
       | ThreadLaunchTypes.ThreadLaunchError
       | ThreadLaunchTypes.ThreadLaunchBaseRefError
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+      | LinearAutopilotWorkflow.LinearAutopilotWorkflowError
     >;
   }
 >()("t3/linear/LinearAutopilotDispatcher") {}
@@ -106,8 +108,9 @@ const make = Effect.gen(function* () {
         const workflow =
           currentSettings.linearAutopilot.workflows[candidate.projectId] ??
           LinearAutopilotWorkflow.defaultWorkflow;
-        LinearAutopilotWorkflow.validateLinearAutopilotWorkflow(workflow);
-        const workflowExecution = LinearAutopilotWorkflow.startLinearAutopilotWorkflow(workflow);
+        const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+          LinearAutopilotWorkflow.startLinearAutopilotWorkflow(workflow),
+        );
 
         const remoteResult = yield* git
           .resolvePrimaryRemoteName(project.workspaceRoot)
@@ -131,8 +134,9 @@ const make = Effect.gen(function* () {
           projectId: candidate.projectId,
           sourceUpdatedAt: candidate.sourceUpdatedAt,
           snapshotHash: candidate.snapshotHash,
-          workflowJson:
+          workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
             LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(workflowExecution),
+          ),
           createdAt: yield* DateTime.now,
         });
         if (created && run.source !== "linear") {
@@ -153,7 +157,9 @@ const make = Effect.gen(function* () {
             baseRef: baseRefResult.success,
             workflowJson:
               run.workflowJson ??
-              LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(workflowExecution),
+              (yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(workflowExecution),
+              )),
           });
         } else if (run.state !== "planning") {
           yield* intake.markDispatched(candidate.outboxId, yield* DateTime.now);
@@ -169,7 +175,9 @@ const make = Effect.gen(function* () {
         const pinnedWorkflow =
           run.workflowJson === null
             ? workflowExecution
-            : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson);
+            : yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson!),
+              );
         const entryNode = LinearAutopilotWorkflow.workflowNode(
           pinnedWorkflow.definition,
           pinnedWorkflow.nodeId,
@@ -209,7 +217,7 @@ const make = Effect.gen(function* () {
       let deferred = 0;
 
       for (const candidate of candidates) {
-        let workflowExecution =
+        let workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
           candidate.workflowJson === null
             ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
                 LinearAutopilotWorkflow.defaultWorkflow,
@@ -219,7 +227,8 @@ const make = Effect.gen(function* () {
               )
             : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(
                 candidate.workflowJson,
-              );
+              ),
+        );
         const attempt = yield* attempts.getLatest({
           runId: candidate.runId,
           phase: "implementation",
@@ -269,7 +278,12 @@ const make = Effect.gen(function* () {
           project.defaultModelSelection ?? currentSettings.defaultModelSelection;
         const nextSelection =
           candidate.state === "approved" && candidate.workflowJson !== null
-            ? LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "approve")
+            ? yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
+                  workflowExecution,
+                  "approve",
+                ),
+              )
             : null;
         if (nextSelection !== null) {
           if (nextSelection._tag !== "advanced") {
@@ -306,8 +320,9 @@ const make = Effect.gen(function* () {
             expectedRevision: candidate.revision,
             nextState: "implementing",
             updatedAt: yield* DateTime.now,
-            workflowJson:
+            workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
               LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(workflowExecution),
+            ),
           });
           if (!transitioned) {
             deferred += 1;
