@@ -53,7 +53,7 @@ export class LinearAutopilotReconciler extends Context.Service<
       | ThreadManagementErrors.ThreadManagementError
       | Orchestrator.OrchestratorV2Error
       | PullRequestService.PullRequestError
-      | LinearAutopilotWorkflow.LinearAutopilotWorkflowError
+      | LinearAutopilotWorkflow.LinearAutopilotWorkflowFailure
       | PlatformError.PlatformError
     >;
   }
@@ -391,12 +391,7 @@ const make = Effect.gen(function* () {
               continue;
             }
             const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
-              run.workflowJson === null
-                ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
-                    LinearAutopilotWorkflow.defaultWorkflow,
-                    "implement",
-                  )
-                : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+              LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "implement"),
             );
             const retry = yield* LinearAutopilotWorkflow.effect(() =>
               LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
@@ -442,12 +437,7 @@ const make = Effect.gen(function* () {
             continue;
           }
           const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
-            run.workflowJson === null
-              ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
-                  LinearAutopilotWorkflow.defaultWorkflow,
-                  "implement",
-                )
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "implement"),
           );
           const next = yield* LinearAutopilotWorkflow.effect(() =>
             LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "done"),
@@ -542,12 +532,7 @@ const make = Effect.gen(function* () {
             continue;
           }
           let workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
-            run.workflowJson === null
-              ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
-                  LinearAutopilotWorkflow.defaultWorkflow,
-                  "merge",
-                )
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "merge"),
           );
           if (
             attempt.attemptNumber > 1 &&
@@ -682,11 +667,7 @@ const make = Effect.gen(function* () {
           attempt.summary !== null
         ) {
           const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
-            run.workflowJson === null
-              ? LinearAutopilotWorkflow.startLinearAutopilotWorkflow(
-                  LinearAutopilotWorkflow.defaultWorkflow,
-                )
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "plan"),
           );
           const next = yield* LinearAutopilotWorkflow.effect(() =>
             LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "done"),
@@ -733,14 +714,7 @@ const make = Effect.gen(function* () {
           const projectId = run.projectId;
           const baseRef = run.baseRef;
           const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
-            run.workflowJson === null
-              ? LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
-                  LinearAutopilotWorkflow.startLinearAutopilotWorkflow(
-                    LinearAutopilotWorkflow.defaultWorkflow,
-                  ),
-                  "done",
-                ).state
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "review"),
           );
           const reviewNode = LinearAutopilotWorkflow.workflowNode(
             workflowExecution.definition,
@@ -810,12 +784,7 @@ const make = Effect.gen(function* () {
         }
         if (verdict === "REVISE") {
           const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
-            run.workflowJson === null
-              ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
-                  LinearAutopilotWorkflow.defaultWorkflow,
-                  "review",
-                )
-              : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(run.workflowJson),
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "review"),
           );
           const retry = yield* LinearAutopilotWorkflow.effect(() =>
             LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "revise"),

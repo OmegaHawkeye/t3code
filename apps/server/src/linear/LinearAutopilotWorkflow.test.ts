@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import {
   advanceLinearAutopilotWorkflow,
   defaultWorkflow,
+  decodeLinearAutopilotWorkflowExecution,
   effect,
   startLinearAutopilotWorkflow,
   validateLinearAutopilotWorkflow,
@@ -37,6 +38,22 @@ describe("LinearAutopilotWorkflow", () => {
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         expect(result.failure._tag).toBe("LinearAutopilotWorkflowError");
+      }
+    }),
+  );
+
+  it.effect("retains the codec cause for malformed persisted snapshots", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(
+        effect(() => decodeLinearAutopilotWorkflowExecution("not-json")),
+      );
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure._tag).toBe("LinearAutopilotWorkflowCodecError");
+        if (result.failure._tag === "LinearAutopilotWorkflowCodecError") {
+          expect(result.failure.operation).toBe("execution decode");
+          expect(result.failure.cause).toBeDefined();
+        }
       }
     }),
   );

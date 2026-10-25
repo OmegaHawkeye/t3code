@@ -48,7 +48,7 @@ export class LinearAutopilotDispatcher extends Context.Service<
       | ThreadLaunchTypes.ThreadLaunchError
       | ThreadLaunchTypes.ThreadLaunchBaseRefError
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
-      | LinearAutopilotWorkflow.LinearAutopilotWorkflowError
+      | LinearAutopilotWorkflow.LinearAutopilotWorkflowFailure
     >;
     /** Starts only human-approved runs after rechecking their persisted plan hash and binding. */
     readonly dispatchApproved: (
@@ -61,7 +61,7 @@ export class LinearAutopilotDispatcher extends Context.Service<
       | ThreadLaunchTypes.ThreadLaunchError
       | ThreadLaunchTypes.ThreadLaunchBaseRefError
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
-      | LinearAutopilotWorkflow.LinearAutopilotWorkflowError
+      | LinearAutopilotWorkflow.LinearAutopilotWorkflowFailure
     >;
   }
 >()("t3/linear/LinearAutopilotDispatcher") {}
@@ -218,16 +218,12 @@ const make = Effect.gen(function* () {
 
       for (const candidate of candidates) {
         let workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
-          candidate.workflowJson === null
-            ? LinearAutopilotWorkflow.resumeLinearAutopilotWorkflow(
-                LinearAutopilotWorkflow.defaultWorkflow,
-                candidate.state === "approved" || candidate.state === "implementing"
-                  ? "implement"
-                  : "review",
-              )
-            : LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(
-                candidate.workflowJson,
-              ),
+          LinearAutopilotWorkflow.executionFromSnapshot(
+            candidate.workflowJson,
+            candidate.state === "approved" || candidate.state === "implementing"
+              ? "implement"
+              : "review",
+          ),
         );
         const attempt = yield* attempts.getLatest({
           runId: candidate.runId,

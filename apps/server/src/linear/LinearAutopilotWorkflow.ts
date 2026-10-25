@@ -35,21 +35,38 @@ const failWorkflow = (message: string): never => {
 
 export class LinearAutopilotWorkflowError extends Schema.TaggedError<LinearAutopilotWorkflowError>()(
   "LinearAutopilotWorkflowError",
-  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  { message: Schema.String },
 ) {}
 
 const isLinearAutopilotWorkflowError = Schema.is(LinearAutopilotWorkflowError);
 
-export const effect = <A>(evaluate: () => A): Effect.Effect<A, LinearAutopilotWorkflowError> =>
+export class LinearAutopilotWorkflowCodecError extends Schema.TaggedError<LinearAutopilotWorkflowCodecError>()(
+  "LinearAutopilotWorkflowCodecError",
+  { operation: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Workflow ${this.operation} failed.`;
+  }
+}
+
+export type LinearAutopilotWorkflowFailure =
+  | LinearAutopilotWorkflowError
+  | LinearAutopilotWorkflowCodecError;
+
+const isLinearAutopilotWorkflowCodecError = Schema.is(LinearAutopilotWorkflowCodecError);
+
+export const effect = <A>(evaluate: () => A): Effect.Effect<A, LinearAutopilotWorkflowFailure> =>
   Effect.try({
     try: evaluate,
     catch: (cause) =>
       isLinearAutopilotWorkflowError(cause)
         ? cause
-        : new LinearAutopilotWorkflowError({
-            message: "A workflow definition or execution snapshot is invalid.",
-            cause,
-          }),
+        : isLinearAutopilotWorkflowCodecError(cause)
+          ? cause
+          : new LinearAutopilotWorkflowCodecError({
+              operation: "execution",
+              cause,
+            }),
   });
 
 const reachableFrom = (
@@ -106,8 +123,8 @@ export const decodeLinearAutopilotWorkflowExecution = (
   try {
     execution = Schema.decodeSync(workflowExecutionJson)(serialized);
   } catch (cause) {
-    throw new LinearAutopilotWorkflowError({
-      message: "The persisted workflow execution could not be decoded.",
+    throw new LinearAutopilotWorkflowCodecError({
+      operation: "execution decode",
       cause,
     });
   }
@@ -123,7 +140,22 @@ export const decodeLinearAutopilotWorkflowExecution = (
 
 export const encodeLinearAutopilotWorkflowExecution = (
   execution: LinearAutopilotWorkflowExecution,
-): string => Schema.encodeSync(workflowExecutionJson)(execution);
+): string => {
+  try {
+    return Schema.encodeSync(workflowExecutionJson)(execution);
+  } catch (cause) {
+    throw new LinearAutopilotWorkflowCodecError({ operation: "execution encode", cause });
+  }
+};
+
+/** Backfill a known cursor for rows created before workflow snapshots were added. */
+export const executionFromSnapshot = (
+  serialized: string | null,
+  legacyNodeId: string,
+): LinearAutopilotWorkflowExecution =>
+  serialized === null
+    ? resumeLinearAutopilotWorkflow(defaultWorkflow, legacyNodeId)
+    : decodeLinearAutopilotWorkflowExecution(serialized);
 
 /** Select one outcome edge and checkpoint its loop budget before another node is launched. */
 export const advanceLinearAutopilotWorkflow = (
