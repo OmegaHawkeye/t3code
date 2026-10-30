@@ -1,4 +1,4 @@
-import { ArrowRightIcon, ListChecksIcon } from "lucide-react";
+import { ArrowRightIcon, ListChecksIcon, WorkflowIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
@@ -54,6 +54,17 @@ export function AutopilotIntegrationsPanel() {
             }
           />
         ))}
+      </SettingsSection>
+      <SettingsSection title="Workflows">
+        <SettingsRow
+          title="Project workflows"
+          description="Choose each project's phases, personas, and retry budgets. New runs use the saved workflow."
+          control={
+            <Button render={<Link to="/settings/linear-autopilot/workflows" />} variant="outline">
+              Edit workflows <WorkflowIcon />
+            </Button>
+          }
+        />
       </SettingsSection>
       <SettingsSection title="Approvals">
         <SettingsRow

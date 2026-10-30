@@ -39,6 +39,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./linearAutopilotWorkflow": {
+      "types": "./src/linearAutopilotWorkflow.ts",
+      "import": "./src/linearAutopilotWorkflow.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"

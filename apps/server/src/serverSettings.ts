@@ -37,6 +37,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { linearAutopilotWorkflowIssues } from "@t3tools/shared/linearAutopilotWorkflow";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
@@ -169,6 +170,37 @@ function ensureProviderInstanceMutationAllowed(
   return Effect.void;
 }
 
+/** Saved workflows must be executable; runs pin them later, so reject them before they land. */
+function ensureAutopilotWorkflowsValid(
+  settings: ServerSettings,
+  settingsPath: string,
+): Effect.Effect<ServerSettings, ServerSettingsError> {
+  for (const [projectId, workflow] of Object.entries(settings.linearAutopilot.workflows)) {
+    const [issue] = linearAutopilotWorkflowIssues(workflow);
+    if (issue !== undefined) {
+      return Effect.fail(
+        new ServerSettingsError({
+          settingsPath,
+          operation: "validate-autopilot-workflow",
+          detail: `workflow for project ${projectId}: ${issue.message}`,
+        }),
+      );
+    }
+  }
+  return Effect.succeed(settings);
+}
+
+const applyValidatedSettingsPatch = (
+  current: ServerSettings,
+  patch: ServerSettingsPatch,
+  settingsPath: string,
+) => {
+  const next = applyServerSettingsPatch(current, patch);
+  return patch.linearAutopilot === undefined
+    ? Effect.succeed(next)
+    : ensureAutopilotWorkflowsValid(next, settingsPath);
+};
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -239,7 +271,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       getSettings,
       updateSettings: (patch) =>
         updateTestSettings((currentSettings) =>
-          Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+          applyValidatedSettingsPatch(currentSettings, patch, "test settings"),
         ),
       updateProviderInstance: (mutation, patch = {}) =>
         updateTestSettings((currentSettings) =>
@@ -1150,7 +1182,7 @@ const make = Effect.gen(function* () {
     ),
     updateSettings: (patch) =>
       updateAndPersistSettings((current) =>
-        Effect.succeed(applyServerSettingsPatch(current, patch)),
+        applyValidatedSettingsPatch(current, patch, settingsPath),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings((current) =>
