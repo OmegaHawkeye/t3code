@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   addNode,
   customizeWorkflow,
+  moveNode,
   removeNode,
   routeTargets,
   setRoute,
@@ -65,5 +66,14 @@ describe("removeNode", () => {
       edge: { from: "implement", on: "done" },
       message: 'edge target "merge" is missing.',
     });
+  });
+
+  it("forgets the removed phase's saved position", () => {
+    const moved = moveNode(
+      moveNode(defaultLinearAutopilotWorkflow, "merge", { x: 10, y: 20 }),
+      "end",
+      { x: 300, y: 20 },
+    );
+    expect(removeNode(moved, "merge").layout).toEqual({ end: { x: 300, y: 20 } });
   });
 });

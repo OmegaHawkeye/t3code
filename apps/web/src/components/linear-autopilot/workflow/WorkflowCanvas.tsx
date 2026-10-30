@@ -76,6 +76,7 @@ export function WorkflowCanvas({
   selection,
   onSelect,
   onRoute,
+  onMove,
   personaLabel,
 }: {
   readonly workflow: LinearAutopilotWorkflow;
@@ -84,17 +85,19 @@ export function WorkflowCanvas({
   readonly selection: WorkflowSelection;
   readonly onSelect: (selection: WorkflowSelection) => void;
   readonly onRoute: (from: string, on: LinearAutopilotRoutableOutcome, to: string) => void;
+  readonly onMove: (nodeId: string, position: Point) => void;
   readonly personaLabel: (nodeId: string) => string;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
-  const [moved, setMoved] = useState<Record<string, Point>>({});
+  // Position of the phase being dragged; committed to the workflow when the drag ends.
+  const [dragged, setDragged] = useState<{ readonly id: string; readonly at: Point } | null>(null);
   const [view, setView] = useState<View>({ x: FIT_PADDING, y: FIT_PADDING, scale: 1 });
   const [gesture, setGesture] = useState<Gesture | null>(null);
 
-  // Positions are a view concern only; saved workflows carry no layout.
   const layout = {
     ...autoLayout(workflow, { columnWidth: NODE_W + 88, rowHeight: 150 }),
-    ...moved,
+    ...workflow.layout,
+    ...(dragged ? { [dragged.id]: dragged.at } : {}),
   };
   const posOf = (id: string): Point => layout[id] ?? { x: 0, y: 0 };
   const nodeById = (id: string) => workflow.nodes.find((node) => node.id === id);
@@ -215,10 +218,10 @@ export function WorkflowCanvas({
       });
     } else if (gesture.kind === "move") {
       const world = toWorld(point);
-      setMoved((current) => ({
-        ...current,
-        [gesture.id]: { x: world.x - gesture.grab.x, y: world.y - gesture.grab.y },
-      }));
+      setDragged({
+        id: gesture.id,
+        at: { x: Math.round(world.x - gesture.grab.x), y: Math.round(world.y - gesture.grab.y) },
+      });
     } else {
       setGesture({ ...gesture, at: toWorld(point) });
     }
@@ -237,6 +240,8 @@ export function WorkflowCanvas({
       if (target !== undefined && wireTargets?.has(target))
         onRoute(gesture.from, gesture.on, target);
     }
+    if (gesture?.kind === "move" && dragged?.id === gesture.id) onMove(dragged.id, dragged.at);
+    setDragged(null);
     setGesture(null);
   };
   const startMove = (id: string, event: ReactPointerEvent) => {
@@ -273,9 +278,14 @@ export function WorkflowCanvas({
       }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={() => setGesture(null)}
+      onPointerCancel={() => {
+        setDragged(null);
+        setGesture(null);
+      }}
       onPointerLeave={() => {
-        if (gesture?.kind !== "pan") setGesture(null);
+        if (gesture?.kind === "pan") return;
+        setDragged(null);
+        setGesture(null);
       }}
     >
       <div

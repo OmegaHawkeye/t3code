@@ -59,6 +59,13 @@ export const LinearAutopilotWorkflow = Schema.Struct({
     .check(Schema.isMinLength(1))
     .check(Schema.isMaxLength(8)),
   edges: Schema.Array(LinearAutopilotWorkflowEdge).check(Schema.isMaxLength(32)),
+  /** Editor positions keyed by node id or "end". Execution never reads them. */
+  layout: Schema.optional(
+    Schema.Record(
+      Schema.String.check(Schema.isMaxLength(80)),
+      Schema.Struct({ x: Schema.Finite, y: Schema.Finite }),
+    ),
+  ),
 });
 export type LinearAutopilotWorkflow = typeof LinearAutopilotWorkflow.Type;
 

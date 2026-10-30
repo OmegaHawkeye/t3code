@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { PrimaryEnvironmentHttpClient } from "../../../environments/primary/httpClient";
 import { cn } from "../../../lib/utils";
 import { runPrimaryHttp } from "../../../lib/runtime";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../../ui/alert";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
@@ -30,7 +31,7 @@ import {
   useUpdateScopedSettings,
 } from "../../settings/useScopedSettings";
 import { WorkflowCanvas, type WorkflowSelection } from "./WorkflowCanvas";
-import { WorkflowPersonaModelPicker } from "./WorkflowPersonaModelPicker";
+import { useWorkflowModelName, WorkflowPersonaModelPicker } from "./WorkflowPersonaModelPicker";
 import {
   addNode,
   canAddNode,
@@ -41,6 +42,7 @@ import {
   issueForRoute,
   issuesForNode,
   issueText,
+  moveNode,
   outcomesOf,
   PHASE_LABEL,
   removeNode,
@@ -167,6 +169,8 @@ function ProjectWorkflowEditor({
   readonly onSave: (workflow: LinearAutopilotWorkflow) => void;
 }) {
   const [draft, setDraft] = useState<LinearAutopilotWorkflow | null>(null);
+  // The saved workflow the draft started from, to notice a save from another device or tab.
+  const [draftBase, setDraftBase] = useState<string | null>(null);
   const [selection, setSelection] = useState<WorkflowSelection>({ kind: "node", id: saved.entry });
   const [adding, setAdding] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
@@ -174,11 +178,17 @@ function ProjectWorkflowEditor({
   const builtIn = isBuiltInWorkflow(workflow);
   const editable = !writeBlocked && !builtIn;
   // Settings round-trip through JSON, so structural equality is what "saved" means here.
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(saved);
+  const savedJson = JSON.stringify(saved);
+  const dirty = draft !== null && JSON.stringify(draft) !== savedJson;
+  const conflict = dirty && draftBase !== null && draftBase !== savedJson;
   const issues = linearAutopilotWorkflowIssues(workflow);
-  const edit = (next: LinearAutopilotWorkflow) => setDraft(next);
-  const replace = (next: LinearAutopilotWorkflow) => {
+  const modelName = useWorkflowModelName();
+  const edit = (next: LinearAutopilotWorkflow) => {
+    if (draft === null) setDraftBase(savedJson);
     setDraft(next);
+  };
+  const replace = (next: LinearAutopilotWorkflow) => {
+    edit(next);
     setSelection({ kind: "node", id: next.entry });
     setCanvasKey((key) => key + 1);
   };
@@ -191,7 +201,7 @@ function ProjectWorkflowEditor({
     if (!node) return "";
     if (node.kind === "merge") return "Protected delivery";
     if (!node.persona) return "Project default model";
-    return node.persona.instructions?.personaName ?? node.persona.modelSelection.model;
+    return node.persona.instructions?.personaName ?? modelName(node.persona.modelSelection);
   };
   const globalIssues = issues.filter(
     (issue) => issue.nodeId === undefined && issue.edge === undefined,
@@ -239,11 +249,18 @@ function ProjectWorkflowEditor({
               Reset to built-in
             </Button>
           )}
-          <Button variant="ghost" disabled={!dirty} onClick={() => replace(saved)}>
+          <Button
+            variant="ghost"
+            disabled={!dirty}
+            onClick={() => {
+              replace(saved);
+              setDraft(null);
+            }}
+          >
             Discard
           </Button>
           <Button
-            disabled={writeBlocked || !dirty || issues.length > 0}
+            disabled={writeBlocked || !dirty || conflict || issues.length > 0}
             onClick={() => {
               onSave(workflow);
               setDraft(null);
@@ -253,6 +270,28 @@ function ProjectWorkflowEditor({
           </Button>
         </div>
       </div>
+      {conflict ? (
+        <Alert variant="warning">
+          <AlertTriangleIcon />
+          <AlertTitle>Saved somewhere else while you were editing</AlertTitle>
+          <AlertDescription>Saving now would replace that version.</AlertDescription>
+          <AlertAction>
+            <Button
+              variant="outline"
+              size="compact"
+              onClick={() => {
+                replace(saved);
+                setDraft(null);
+              }}
+            >
+              Load saved version
+            </Button>
+            <Button variant="ghost" size="compact" onClick={() => setDraftBase(savedJson)}>
+              Keep my changes
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : null}
       <p className="text-sm text-muted-foreground">
         {builtIn
           ? "Runs in this project use the built-in plan → review → implement → merge workflow. Customize it to choose personas, retry budgets, and alternate phases."
@@ -274,6 +313,7 @@ function ProjectWorkflowEditor({
             edit(setRoute(workflow, from, on, to));
             setSelection({ kind: "route", from, on });
           }}
+          onMove={(nodeId, position) => edit(moveNode(workflow, nodeId, position))}
           personaLabel={personaLabel}
         />
         {editable ? (

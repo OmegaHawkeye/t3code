@@ -1,5 +1,5 @@
 import type { ModelSelection } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, formatModelSlugName } from "@t3tools/shared/model";
 
 import { getCustomModelOptionsByInstance } from "../../../modelSelection";
 import {
@@ -10,9 +10,31 @@ import {
 import { useEnvironmentProviders } from "../../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../../state/server";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
+import { getTriggerDisplayModelName } from "../../chat/providerIconUtils";
 import { useSettingsScope } from "../../settings/SettingsScopeContext";
 import { useScopedModelDisabledReason } from "../../settings/useScopedModelAvailability";
 import { useScopedSettings } from "../../settings/useScopedSettings";
+
+function useScopedProviders() {
+  const { environment } = useSettingsScope();
+  const providersByEnvironment = useEnvironmentProviders();
+  return (
+    (environment?.serverConfig
+      ? providersByEnvironment.get(environment.environmentId)
+      : undefined) ?? EMPTY_SERVER_PROVIDERS
+  );
+}
+
+/** Labels a phase's model the way the composer does, falling back to a readable slug. */
+export function useWorkflowModelName() {
+  const providers = useScopedProviders();
+  return (selection: ModelSelection) => {
+    const model = providers
+      .find((provider) => provider.instanceId === selection.instanceId)
+      ?.models.find((candidate) => candidate.slug === selection.model);
+    return model ? getTriggerDisplayModelName(model) : formatModelSlugName(selection.model);
+  };
+}
 
 /** The same provider/model picker as the composer, scoped to the environment being edited. */
 export function WorkflowPersonaModelPicker({
@@ -29,11 +51,7 @@ export function WorkflowPersonaModelPicker({
 }) {
   const settings = useScopedSettings();
   const { environment } = useSettingsScope();
-  const providersByEnvironment = useEnvironmentProviders();
-  const providers =
-    (environment?.serverConfig
-      ? providersByEnvironment.get(environment.environmentId)
-      : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const providers = useScopedProviders();
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
   );

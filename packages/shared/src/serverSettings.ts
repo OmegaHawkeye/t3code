@@ -588,6 +588,23 @@ export function applyServerSettingsPatch(
     ...(patch.reviewGuideModelSelection !== undefined
       ? { reviewGuideModelSelection: patch.reviewGuideModelSelection }
       : {}),
+    // Autopilot maps are sent whole; deepMerge would keep a mapping or workflow the client removed.
+    ...(patch.linearAutopilot !== undefined
+      ? {
+          linearAutopilot: {
+            ...next.linearAutopilot,
+            ...(patch.linearAutopilot.projectMappings !== undefined
+              ? { projectMappings: patch.linearAutopilot.projectMappings }
+              : {}),
+            ...(patch.linearAutopilot.githubIssueProjectMappings !== undefined
+              ? { githubIssueProjectMappings: patch.linearAutopilot.githubIssueProjectMappings }
+              : {}),
+            ...(patch.linearAutopilot.workflows !== undefined
+              ? { workflows: patch.linearAutopilot.workflows }
+              : {}),
+          },
+        }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };

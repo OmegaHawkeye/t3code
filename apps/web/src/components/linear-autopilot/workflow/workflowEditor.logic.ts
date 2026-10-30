@@ -124,11 +124,21 @@ export function removeNode(
   workflow: LinearAutopilotWorkflow,
   nodeId: string,
 ): LinearAutopilotWorkflow {
+  const { [nodeId]: _position, ...layout } = workflow.layout ?? {};
   return {
     ...workflow,
     nodes: workflow.nodes.filter((node) => node.id !== nodeId),
     edges: workflow.edges.filter((edge) => edge.from !== nodeId),
+    ...(workflow.layout === undefined ? {} : { layout }),
   };
+}
+
+export function moveNode(
+  workflow: LinearAutopilotWorkflow,
+  nodeId: string,
+  position: Point,
+): LinearAutopilotWorkflow {
+  return { ...workflow, layout: { ...workflow.layout, [nodeId]: position } };
 }
 
 /** Nodes an outcome may be routed to, so pickers and drag targets only offer valid choices. */
