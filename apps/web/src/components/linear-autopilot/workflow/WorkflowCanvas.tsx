@@ -78,6 +78,8 @@ export function WorkflowCanvas({
   onRoute,
   onMove,
   personaLabel,
+  activeNodeId = null,
+  traversals,
 }: {
   readonly workflow: LinearAutopilotWorkflow;
   readonly issues: readonly LinearAutopilotWorkflowIssue[];
@@ -87,6 +89,10 @@ export function WorkflowCanvas({
   readonly onRoute: (from: string, on: LinearAutopilotRoutableOutcome, to: string) => void;
   readonly onMove: (nodeId: string, position: Point) => void;
   readonly personaLabel: (nodeId: string) => string;
+  /** Phase a run is on now, when the canvas shows a run instead of the draft. */
+  readonly activeNodeId?: string | null;
+  /** A run's loop counts keyed `from:on:to`, shown against each route's budget. */
+  readonly traversals?: Readonly<Record<string, number>>;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   // Position of the phase being dragged; committed to the workflow when the drag ends.
@@ -378,7 +384,11 @@ export function WorkflowCanvas({
             >
               {error ? <AlertTriangleIcon className="size-3" aria-hidden /> : null}
               {on}
-              {edge.budget !== undefined ? ` ×${edge.budget}` : ""}
+              {edge.budget === undefined
+                ? ""
+                : traversals === undefined
+                  ? ` ×${edge.budget}`
+                  : ` ${traversals[`${edge.from}:${on}:${edge.to}`] ?? 0}/${edge.budget}`}
             </button>
           );
         })}
@@ -408,6 +418,7 @@ export function WorkflowCanvas({
                 "absolute z-20 rounded-xl border bg-card text-left shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                 !readOnly && "cursor-move",
                 selected && "border-primary ring-1 ring-primary",
+                activeNodeId === node.id && "border-info ring-2 ring-info/50",
                 nodeIssues.length > 0 && !selected && "border-destructive",
                 droppable && "ring-2 ring-primary/50",
                 wireTargets !== null &&
@@ -430,6 +441,9 @@ export function WorkflowCanvas({
                     {personaLabel(node.id)}
                   </div>
                 </div>
+                {activeNodeId === node.id ? (
+                  <span className="rounded bg-info/16 px-1 text-3xs text-info-foreground">now</span>
+                ) : null}
                 {workflow.entry === node.id ? (
                   <span className="rounded bg-muted px-1 text-3xs text-muted-foreground">
                     start
@@ -487,6 +501,7 @@ export function WorkflowCanvas({
             "absolute z-20 flex items-center justify-center rounded-full border bg-muted text-xs font-medium text-muted-foreground",
             !readOnly && "cursor-move",
             wireTargets?.has("end") && "ring-2 ring-primary/50",
+            activeNodeId === "end" && "border-info ring-2 ring-info/50",
           )}
           style={{ left: posOf("end").x, top: posOf("end").y, width: END_W, height: END_H }}
         >

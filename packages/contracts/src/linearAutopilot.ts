@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 
 import { ProjectId } from "./baseSchemas.ts";
+import { LinearAutopilotWorkflowExecution } from "./linearAutopilotWorkflow.ts";
+import { AutopilotTicketSource } from "./autopilotTicket.ts";
 
 export const LinearAutopilotPendingApproval = Schema.Struct({
   runId: Schema.String,
@@ -65,3 +67,44 @@ export const LinearAutopilotApproveRequest = Schema.Struct({
 });
 
 export const LinearAutopilotApproveResult = Schema.Struct({ approved: Schema.Boolean });
+
+export const LinearAutopilotRunState = Schema.Literals([
+  "queued",
+  "planning",
+  "reviewing",
+  "needs_approval",
+  "approved",
+  "implementing",
+  "verifying",
+  "delivering",
+  "paused",
+  "delivered",
+  "failed",
+  "cancelled",
+]);
+export type LinearAutopilotRunState = typeof LinearAutopilotRunState.Type;
+
+export const LinearAutopilotRunSummary = Schema.Struct({
+  runId: Schema.String,
+  revision: Schema.Int,
+  source: AutopilotTicketSource,
+  state: LinearAutopilotRunState,
+  identifier: Schema.NullOr(Schema.String),
+  title: Schema.NullOr(Schema.String),
+  url: Schema.NullOr(Schema.String),
+  /** The workflow the run pinned at start and its cursor; null for runs from before workflows. */
+  workflow: Schema.NullOr(LinearAutopilotWorkflowExecution),
+  /** Thread of the newest phase attempt, for jumping to the agent's work. */
+  threadId: Schema.NullOr(Schema.String),
+  updatedAt: Schema.String,
+});
+export type LinearAutopilotRunSummary = typeof LinearAutopilotRunSummary.Type;
+
+export const LinearAutopilotRunSummaries = Schema.Array(LinearAutopilotRunSummary);
+
+export const LinearAutopilotCancelRunRequest = Schema.Struct({
+  runId: Schema.String,
+  expectedRevision: Schema.Int,
+});
+
+export const LinearAutopilotCancelRunResult = Schema.Struct({ cancelled: Schema.Boolean });

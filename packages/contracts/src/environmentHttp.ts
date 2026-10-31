@@ -48,6 +48,7 @@ import {
 import {
   DpopFailureReason,
   AuthSessionId,
+  ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -68,6 +69,9 @@ import {
 import {
   LinearAutopilotApproveRequest,
   LinearAutopilotApproveResult,
+  LinearAutopilotCancelRunRequest,
+  LinearAutopilotCancelRunResult,
+  LinearAutopilotRunSummaries,
   LinearAutopilotPendingApprovals,
   LinearAutopilotCatalog,
   LinearAutopilotOAuthDisconnectResult,
@@ -763,6 +767,22 @@ class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopil
       headers: OptionalBearerHeaders,
       payload: LinearAutopilotApproveRequest,
       success: LinearAutopilotApproveResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("listRuns", "/api/linear-autopilot/runs", {
+      headers: OptionalBearerHeaders,
+      query: Schema.Struct({ projectId: ProjectId }),
+      success: LinearAutopilotRunSummaries,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelRun", "/api/linear-autopilot/runs/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: LinearAutopilotCancelRunRequest,
+      success: LinearAutopilotCancelRunResult,
       error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}

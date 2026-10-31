@@ -24,6 +24,7 @@ import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
 import { Textarea } from "../../ui/textarea";
+import { Toggle, ToggleGroup } from "../../ui/toggle-group";
 import { SettingsPageContainer } from "../../settings/settingsLayout";
 import {
   useScopedSettings,
@@ -32,6 +33,7 @@ import {
 } from "../../settings/useScopedSettings";
 import { WorkflowCanvas, type WorkflowSelection } from "./WorkflowCanvas";
 import { useWorkflowModelName, WorkflowPersonaModelPicker } from "./WorkflowPersonaModelPicker";
+import { useProjectRuns, WorkflowRunDetails, WorkflowRunList } from "./WorkflowRuns";
 import {
   addNode,
   canAddNode,
@@ -53,6 +55,18 @@ import {
 } from "./workflowEditor.logic";
 
 const BUDGET_OPTIONS = [0, 1, 2, 3, 5, 10];
+
+function phaseSubtitle(
+  workflow: LinearAutopilotWorkflow,
+  nodeId: string,
+  modelName: (selection: ModelSelection) => string,
+) {
+  const node = workflow.nodes.find((candidate) => candidate.id === nodeId);
+  if (!node) return "";
+  if (node.kind === "merge") return "Protected delivery";
+  if (!node.persona) return "Project default model";
+  return node.persona.instructions?.personaName ?? modelName(node.persona.modelSelection);
+}
 const selectClass = "h-8 rounded-md border border-input bg-background px-2 text-sm";
 
 export function WorkflowEditorPage() {
@@ -174,6 +188,7 @@ function ProjectWorkflowEditor({
   const [selection, setSelection] = useState<WorkflowSelection>({ kind: "node", id: saved.entry });
   const [adding, setAdding] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
+  const [mode, setMode] = useState<"edit" | "runs">("edit");
   const workflow = draft ?? saved;
   const builtIn = isBuiltInWorkflow(workflow);
   const editable = !writeBlocked && !builtIn;
@@ -196,13 +211,7 @@ function ProjectWorkflowEditor({
   const selectedNodeId =
     selection?.kind === "node" ? selection.id : selection?.kind === "route" ? selection.from : null;
   const selectedNode = workflow.nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const personaLabel = (nodeId: string) => {
-    const node = workflow.nodes.find((candidate) => candidate.id === nodeId);
-    if (!node) return "";
-    if (node.kind === "merge") return "Protected delivery";
-    if (!node.persona) return "Project default model";
-    return node.persona.instructions?.personaName ?? modelName(node.persona.modelSelection);
-  };
+  const personaLabel = (nodeId: string) => phaseSubtitle(workflow, nodeId, modelName);
   const globalIssues = issues.filter(
     (issue) => issue.nodeId === undefined && issue.edge === undefined,
   );
@@ -223,6 +232,17 @@ function ProjectWorkflowEditor({
             </option>
           ))}
         </select>
+        <ToggleGroup
+          aria-label="View"
+          value={[mode]}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (value === "edit" || value === "runs") setMode(value);
+          }}
+        >
+          <Toggle value="edit">Workflow</Toggle>
+          <Toggle value="runs">Runs</Toggle>
+        </ToggleGroup>
         <Badge size="control" variant={builtIn ? "outline" : "info"}>
           {builtIn ? "Built-in workflow" : workflow.label}
         </Badge>
@@ -231,7 +251,7 @@ function ProjectWorkflowEditor({
             Unsaved changes
           </Badge>
         ) : null}
-        <div className="ml-auto flex items-center gap-2">
+        <div className={cn("ml-auto flex items-center gap-2", mode === "runs" && "hidden")}>
           {builtIn ? (
             <Button
               variant="outline"
@@ -270,189 +290,247 @@ function ProjectWorkflowEditor({
           </Button>
         </div>
       </div>
-      {conflict ? (
-        <Alert variant="warning">
-          <AlertTriangleIcon />
-          <AlertTitle>Saved somewhere else while you were editing</AlertTitle>
-          <AlertDescription>Saving now would replace that version.</AlertDescription>
-          <AlertAction>
-            <Button
-              variant="outline"
-              size="compact"
-              onClick={() => {
-                replace(saved);
-                setDraft(null);
-              }}
-            >
-              Load saved version
-            </Button>
-            <Button variant="ghost" size="compact" onClick={() => setDraftBase(savedJson)}>
-              Keep my changes
-            </Button>
-          </AlertAction>
-        </Alert>
-      ) : null}
-      <p className="text-sm text-muted-foreground">
-        {builtIn
-          ? "Runs in this project use the built-in plan → review → implement → merge workflow. Customize it to choose personas, retry budgets, and alternate phases."
-          : "Saved changes apply to new runs. Runs already in progress keep the workflow they started with."}
-        {writeBlocked
-          ? " This environment needs settings write permission to change workflows."
-          : ""}
-      </p>
+      {mode === "runs" ? (
+        <ProjectRunsView projectId={projectId} modelName={modelName} />
+      ) : (
+        <>
+          {conflict ? (
+            <Alert variant="warning">
+              <AlertTriangleIcon />
+              <AlertTitle>Saved somewhere else while you were editing</AlertTitle>
+              <AlertDescription>Saving now would replace that version.</AlertDescription>
+              <AlertAction>
+                <Button
+                  variant="outline"
+                  size="compact"
+                  onClick={() => {
+                    replace(saved);
+                    setDraft(null);
+                  }}
+                >
+                  Load saved version
+                </Button>
+                <Button variant="ghost" size="compact" onClick={() => setDraftBase(savedJson)}>
+                  Keep my changes
+                </Button>
+              </AlertAction>
+            </Alert>
+          ) : null}
+          <p className="text-sm text-muted-foreground">
+            {builtIn
+              ? "Runs in this project use the built-in plan → review → implement → merge workflow. Customize it to choose personas, retry budgets, and alternate phases."
+              : "Saved changes apply to new runs. Runs already in progress keep the workflow they started with."}
+            {writeBlocked
+              ? " This environment needs settings write permission to change workflows."
+              : ""}
+          </p>
 
-      <div className="relative">
-        <WorkflowCanvas
-          key={`${projectId}:${canvasKey}`}
-          workflow={workflow}
-          issues={issues}
-          readOnly={!editable}
-          selection={selection}
-          onSelect={setSelection}
-          onRoute={(from, on, to) => {
-            edit(setRoute(workflow, from, on, to));
-            setSelection({ kind: "route", from, on });
-          }}
-          onMove={(nodeId, position) => edit(moveNode(workflow, nodeId, position))}
-          personaLabel={personaLabel}
-        />
-        {editable ? (
-          <div className="absolute top-3 left-3 z-30">
-            <Button
-              variant="outline"
-              size="compact"
-              disabled={!canAddNode(workflow)}
-              onClick={() => setAdding((value) => !value)}
-            >
-              <PlusIcon aria-hidden /> Add phase
-            </Button>
-            {adding ? (
-              <div className="absolute left-0 z-40 mt-1 w-40 rounded-lg border bg-popover p-1 shadow-lg">
-                {(Object.keys(PHASE_LABEL) as LinearAutopilotWorkflowNodeKind[]).map((kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
-                    onClick={() => {
-                      const result = addNode(workflow, kind, projectModel);
-                      edit(result.workflow);
-                      setSelection({ kind: "node", id: result.nodeId });
-                      setAdding(false);
-                    }}
-                  >
-                    {PHASE_LABEL[kind]}
-                  </button>
-                ))}
+          <div className="relative">
+            <WorkflowCanvas
+              key={`${projectId}:${canvasKey}`}
+              workflow={workflow}
+              issues={issues}
+              readOnly={!editable}
+              selection={selection}
+              onSelect={setSelection}
+              onRoute={(from, on, to) => {
+                edit(setRoute(workflow, from, on, to));
+                setSelection({ kind: "route", from, on });
+              }}
+              onMove={(nodeId, position) => edit(moveNode(workflow, nodeId, position))}
+              personaLabel={personaLabel}
+            />
+            {editable ? (
+              <div className="absolute top-3 left-3 z-30">
+                <Button
+                  variant="outline"
+                  size="compact"
+                  disabled={!canAddNode(workflow)}
+                  onClick={() => setAdding((value) => !value)}
+                >
+                  <PlusIcon aria-hidden /> Add phase
+                </Button>
+                {adding ? (
+                  <div className="absolute left-0 z-40 mt-1 w-40 rounded-lg border bg-popover p-1 shadow-lg">
+                    {(Object.keys(PHASE_LABEL) as LinearAutopilotWorkflowNodeKind[]).map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                        onClick={() => {
+                          const result = addNode(workflow, kind, projectModel);
+                          edit(result.workflow);
+                          setSelection({ kind: "node", id: result.nodeId });
+                          setAdding(false);
+                        }}
+                      >
+                        {PHASE_LABEL[kind]}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
-        ) : null}
-      </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
-        <div className="rounded-xl border">
-          <div className="border-b px-4 py-2 text-xs font-medium text-muted-foreground uppercase">
-            Phases &amp; routes
-          </div>
-          <ul>
-            {workflow.nodes.map((node) => {
-              const nodeIssues = issuesForNode(issues, node.id);
-              return (
-                <li key={node.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelection({ kind: "node", id: node.id })}
-                    className={cn(
-                      "flex w-full items-center gap-3 border-b px-4 py-2.5 text-left text-sm",
-                      selectedNodeId === node.id ? "bg-accent" : "hover:bg-accent/50",
-                    )}
-                  >
-                    <span className="w-28 shrink-0 font-medium">
-                      {PHASE_LABEL[node.kind]}
-                      {node.id !== node.kind ? (
-                        <span className="font-normal text-muted-foreground"> · {node.id}</span>
-                      ) : null}
-                    </span>
-                    <span className="w-40 shrink-0 truncate text-muted-foreground">
-                      {personaLabel(node.id)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                      {workflow.edges
-                        .filter((edge) => edge.from === node.id)
-                        .map(
-                          (edge) =>
-                            `${edge.on} → ${edge.to}${edge.budget !== undefined ? ` ×${edge.budget}` : ""}`,
-                        )
-                        .join(" · ")}
-                    </span>
-                    {nodeIssues.length > 0 ? (
-                      <AlertTriangleIcon
-                        className="size-4 shrink-0 text-destructive"
-                        aria-label={`${nodeIssues.length} issues`}
-                      />
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          {issues.length > 0 ? (
-            <div className="bg-destructive/4 px-4 py-3">
-              <div className="mb-1 text-sm font-medium text-destructive-foreground">
-                {issues.length} {issues.length === 1 ? "issue blocks" : "issues block"} saving
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
+            <div className="rounded-xl border">
+              <div className="border-b px-4 py-2 text-xs font-medium text-muted-foreground uppercase">
+                Phases &amp; routes
               </div>
-              <ul className="space-y-1 text-sm">
-                {issues.map((issue) => (
-                  <li
-                    key={`${issue.nodeId ?? ""}:${issue.edge ? `${issue.edge.from}:${issue.edge.on}` : ""}:${issue.message}`}
-                  >
-                    {issue.nodeId !== undefined || issue.edge !== undefined ? (
+              <ul>
+                {workflow.nodes.map((node) => {
+                  const nodeIssues = issuesForNode(issues, node.id);
+                  return (
+                    <li key={node.id}>
                       <button
                         type="button"
-                        className="text-left underline-offset-2 hover:underline"
-                        onClick={() =>
-                          setSelection(
-                            issue.edge && issue.edge.on !== "blocked"
-                              ? { kind: "route", from: issue.edge.from, on: issue.edge.on }
-                              : { kind: "node", id: issue.nodeId ?? issue.edge!.from },
-                          )
-                        }
+                        onClick={() => setSelection({ kind: "node", id: node.id })}
+                        className={cn(
+                          "flex w-full items-center gap-3 border-b px-4 py-2.5 text-left text-sm",
+                          selectedNodeId === node.id ? "bg-accent" : "hover:bg-accent/50",
+                        )}
                       >
-                        {issueText(issue)}
+                        <span className="w-28 shrink-0 font-medium">
+                          {PHASE_LABEL[node.kind]}
+                          {node.id !== node.kind ? (
+                            <span className="font-normal text-muted-foreground"> · {node.id}</span>
+                          ) : null}
+                        </span>
+                        <span className="w-40 shrink-0 truncate text-muted-foreground">
+                          {personaLabel(node.id)}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                          {workflow.edges
+                            .filter((edge) => edge.from === node.id)
+                            .map(
+                              (edge) =>
+                                `${edge.on} → ${edge.to}${edge.budget !== undefined ? ` ×${edge.budget}` : ""}`,
+                            )
+                            .join(" · ")}
+                        </span>
+                        {nodeIssues.length > 0 ? (
+                          <AlertTriangleIcon
+                            className="size-4 shrink-0 text-destructive"
+                            aria-label={`${nodeIssues.length} issues`}
+                          />
+                        ) : null}
                       </button>
-                    ) : (
-                      issueText(issue)
-                    )}
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
+              {issues.length > 0 ? (
+                <div className="bg-destructive/4 px-4 py-3">
+                  <div className="mb-1 text-sm font-medium text-destructive-foreground">
+                    {issues.length} {issues.length === 1 ? "issue blocks" : "issues block"} saving
+                  </div>
+                  <ul className="space-y-1 text-sm">
+                    {issues.map((issue) => (
+                      <li
+                        key={`${issue.nodeId ?? ""}:${issue.edge ? `${issue.edge.from}:${issue.edge.on}` : ""}:${issue.message}`}
+                      >
+                        {issue.nodeId !== undefined || issue.edge !== undefined ? (
+                          <button
+                            type="button"
+                            className="text-left underline-offset-2 hover:underline"
+                            onClick={() =>
+                              setSelection(
+                                issue.edge && issue.edge.on !== "blocked"
+                                  ? { kind: "route", from: issue.edge.from, on: issue.edge.on }
+                                  : { kind: "node", id: issue.nodeId ?? issue.edge!.from },
+                              )
+                            }
+                          >
+                            {issueText(issue)}
+                          </button>
+                        ) : (
+                          issueText(issue)
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {globalIssues.length === 0 && issues.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-muted-foreground">
+                  Every route passes planning, review, implementation, and the protected merge gate.
+                </p>
+              ) : null}
             </div>
-          ) : null}
-          {globalIssues.length === 0 && issues.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-muted-foreground">
-              Every route passes planning, review, implementation, and the protected merge gate.
-            </p>
-          ) : null}
-        </div>
 
-        <aside className="rounded-xl border p-4" aria-label="Phase inspector">
-          {selectedNode ? (
-            <PhaseInspector
-              workflow={workflow}
-              node={selectedNode}
-              selectedOutcome={selection?.kind === "route" ? selection.on : null}
-              issues={issues}
-              editable={editable}
-              onChange={edit}
-              onRemove={() => {
-                edit(removeNode(workflow, selectedNode.id));
-                setSelection(null);
-              }}
-            />
+            <aside className="rounded-xl border p-4" aria-label="Phase inspector">
+              {selectedNode ? (
+                <PhaseInspector
+                  workflow={workflow}
+                  node={selectedNode}
+                  selectedOutcome={selection?.kind === "route" ? selection.on : null}
+                  issues={issues}
+                  editable={editable}
+                  onChange={edit}
+                  onRemove={() => {
+                    edit(removeNode(workflow, selectedNode.id));
+                    setSelection(null);
+                  }}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Select a phase or a route on the canvas. Drag empty space to pan; scroll or use
+                  the controls to zoom.
+                </p>
+              )}
+            </aside>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProjectRunsView({
+  projectId,
+  modelName,
+}: {
+  readonly projectId: ProjectId;
+  readonly modelName: (selection: ModelSelection) => string;
+}) {
+  const { runs, failed, loading, refresh } = useProjectRuns(projectId);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const run = runs?.find((item) => item.runId === selectedRunId) ?? runs?.[0] ?? null;
+  const execution = run?.workflow ?? null;
+
+  return (
+    <div className="space-y-4">
+      {execution !== null && run !== null ? (
+        <WorkflowCanvas
+          key={run.runId}
+          workflow={execution.definition}
+          issues={[]}
+          readOnly
+          selection={null}
+          onSelect={() => {}}
+          onRoute={() => {}}
+          onMove={() => {}}
+          personaLabel={(nodeId) => phaseSubtitle(execution.definition, nodeId, modelName)}
+          activeNodeId={execution.nodeId}
+          traversals={execution.traversals}
+        />
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
+        <WorkflowRunList
+          runs={runs}
+          failed={failed}
+          loading={loading}
+          selectedRunId={run?.runId ?? null}
+          onSelect={setSelectedRunId}
+          onRefresh={refresh}
+        />
+        <aside className="rounded-xl border p-4" aria-label="Run details">
+          {run ? (
+            <WorkflowRunDetails key={run.runId} run={run} onCancelled={refresh} />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Select a phase or a route on the canvas. Drag empty space to pan; scroll or use the
-              controls to zoom.
+              Runs appear here once Autopilot picks up a ticket for this project.
             </p>
           )}
         </aside>

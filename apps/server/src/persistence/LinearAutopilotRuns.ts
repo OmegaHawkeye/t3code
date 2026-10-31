@@ -9,26 +9,12 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-import { ProjectId } from "@t3tools/contracts";
+import { LinearAutopilotRunState, ProjectId } from "@t3tools/contracts";
 import { AutopilotTicketSource } from "@t3tools/contracts";
 
 import { type PersistenceSqlError, toPersistenceSqlError } from "./Errors.ts";
 
-export const LinearAutopilotRunState = Schema.Literals([
-  "queued",
-  "planning",
-  "reviewing",
-  "needs_approval",
-  "approved",
-  "implementing",
-  "verifying",
-  "delivering",
-  "paused",
-  "delivered",
-  "failed",
-  "cancelled",
-]);
-export type LinearAutopilotRunState = typeof LinearAutopilotRunState.Type;
+export { LinearAutopilotRunState } from "@t3tools/contracts";
 
 export const LinearAutopilotRun = Schema.Struct({
   runId: Schema.String,
@@ -75,6 +61,10 @@ const NewRun = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
 });
 const RecoverableRunsRequest = Schema.Struct({
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+});
+const ProjectRunsRequest = Schema.Struct({
+  projectId: ProjectId,
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
 });
 const TransitionRequest = Schema.Struct({
@@ -151,6 +141,10 @@ export class LinearAutopilotRunRepository extends Context.Service<
     ) => Effect.Effect<LinearAutopilotRun | null, PersistenceSqlError>;
     readonly listRecoverable: (
       limit: number,
+    ) => Effect.Effect<ReadonlyArray<LinearAutopilotRun>, PersistenceSqlError>;
+    /** Most recently updated runs for one project, finished ones included. */
+    readonly listRecentForProject: (
+      input: typeof ProjectRunsRequest.Type,
     ) => Effect.Effect<ReadonlyArray<LinearAutopilotRun>, PersistenceSqlError>;
     /** Returns false when the revision is stale or the transition is not allowed. */
     readonly transition: (
@@ -354,6 +348,40 @@ const make = Effect.gen(function* () {
     `,
   });
 
+  const listRecentForProjectRows = SqlSchema.findAll({
+    Request: ProjectRunsRequest,
+    Result: LinearAutopilotRun,
+    execute: ({ projectId, limit }) => sql`
+      SELECT
+        run_id AS "runId",
+        source_kind AS "source",
+        workspace_id AS "workspaceId",
+        issue_id AS "issueId",
+        project_id AS "projectId",
+        generation AS "generation",
+        state AS "state",
+        source_updated_at AS "sourceUpdatedAt",
+        snapshot_hash AS "snapshotHash",
+        revision AS "revision",
+        thread_id AS "threadId",
+        worktree_id AS "worktreeId",
+        approval_plan_hash AS "approvalPlanHash",
+        approval_policy_version AS "approvalPolicyVersion",
+        approval_project_id AS "approvalProjectId",
+        approval_base_ref AS "approvalBaseRef",
+        base_ref AS "baseRef",
+        workflow_json AS "workflowJson",
+        approved_by AS "approvedBy",
+        approved_at AS "approvedAt",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM linear_autopilot_runs
+      WHERE project_id = ${projectId}
+      ORDER BY updated_at DESC, run_id DESC
+      LIMIT ${limit}
+    `,
+  });
+
   const updateRun = SqlSchema.findAll({
     Request: TransitionRequest,
     Result: Schema.Struct({ runId: Schema.String }),
@@ -506,6 +534,10 @@ const make = Effect.gen(function* () {
     listRecoverable: (limit) =>
       listRecoverableRows({ limit }).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.listRecoverable:query")),
+      ),
+    listRecentForProject: (input) =>
+      listRecentForProjectRows(input).pipe(
+        Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.listRecentForProject:query")),
       ),
     transition: (input) =>
       sql

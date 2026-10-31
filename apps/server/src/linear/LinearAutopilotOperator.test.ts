@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProjectId } from "@t3tools/contracts";
+import { defaultLinearAutopilotWorkflow, ProjectId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,8 +11,10 @@ import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts"
 import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 
 const now = DateTime.makeUnsafe("2026-10-19T11:00:00.000Z");
+const interrupted: string[] = [];
 
 const dependencies = Layer.mergeAll(
   LinearAutopilotIntake.layer,
@@ -20,6 +22,12 @@ const dependencies = Layer.mergeAll(
   LinearAutopilotPhaseAttempts.layer,
   Layer.mock(LinearAutopilotApproval.LinearAutopilotApproval)({
     approve: () => Effect.succeed(true),
+  }),
+  Layer.mock(ThreadManagement.ThreadManagementService)({
+    interruptThread: (input) => {
+      interrupted.push(input.threadId);
+      return Effect.succeed({ type: "no_active_run" as const });
+    },
   }),
 ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory), Layer.provideMerge(NodeServices.layer));
 const layer = LinearAutopilotOperator.layer.pipe(Layer.provideMerge(dependencies));
@@ -114,4 +122,75 @@ it.effect(
         reviewThreadId: "thread-review",
       });
     }).pipe(Effect.provide(layer)),
+);
+
+it.effect("lists a project's runs with their pinned cursor and cancels the running phase", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("trusted-project-1");
+    const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+    yield* intake.ingest({
+      eventId: null,
+      workspaceId: "workspace-1",
+      issueId: "issue-2",
+      identifier: "OME-240",
+      title: "Cancellable run",
+      url: "https://linear.app/ome/issue/OME-240",
+      description: "Bounded description",
+      projectId,
+      sourceUpdatedAt: DateTime.formatIso(now),
+      observedAt: DateTime.formatIso(now),
+    });
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    const { run } = yield* runs.createOrGetActive({
+      workspaceId: "workspace-1",
+      issueId: "issue-2",
+      projectId,
+      sourceUpdatedAt: now,
+      snapshotHash: "b".repeat(64),
+      workflowJson: JSON.stringify({
+        version: 1,
+        definition: defaultLinearAutopilotWorkflow,
+        nodeId: "plan",
+        traversals: {},
+      }),
+      createdAt: now,
+    });
+    yield* runs.transition({
+      runId: run.runId,
+      expectedRevision: 0,
+      nextState: "planning",
+      updatedAt: now,
+    });
+    const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
+    const planning = yield* attempts.begin({
+      runId: run.runId,
+      phase: "planning",
+      commandId: "cmd-plan",
+      startedAt: now,
+    });
+    yield* attempts.markRunning({
+      attemptId: planning.attempt.attemptId,
+      threadId: "thread-plan",
+    });
+
+    const operator = yield* LinearAutopilotOperator.LinearAutopilotOperator;
+    const [listed] = yield* operator.listRuns(projectId, 20);
+    assert.equal(listed?.identifier, "OME-240");
+    assert.equal(listed?.state, "planning");
+    assert.equal(listed?.workflow?.nodeId, "plan");
+    assert.equal(listed?.threadId, "thread-plan");
+
+    assert.isFalse(
+      yield* operator.cancelRun({ runId: run.runId, expectedRevision: 0, cancelledBy: "me" }),
+    );
+    assert.isTrue(
+      yield* operator.cancelRun({ runId: run.runId, expectedRevision: 1, cancelledBy: "me" }),
+    );
+    assert.equal((yield* runs.getById(run.runId))?.state, "cancelled");
+    assert.equal(
+      (yield* attempts.getLatest({ runId: run.runId, phase: "planning" }))?.status,
+      "failed",
+    );
+    assert.deepStrictEqual(interrupted, ["thread-plan"]);
+  }).pipe(Effect.provide(layer)),
 );
