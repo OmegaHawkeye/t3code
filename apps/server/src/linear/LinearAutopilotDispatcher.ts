@@ -10,7 +10,7 @@ import type * as PlatformError from "effect/PlatformError";
 import type { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchTypes from "../orchestration-v2/ThreadLaunchService.ts";
-import type { ServerSettingsError } from "@t3tools/contracts";
+import { autopilotSourceMode, type ServerSettingsError } from "@t3tools/contracts";
 
 import * as ProjectService from "../project/ProjectService.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
@@ -85,6 +85,13 @@ const make = Effect.gen(function* () {
       let deferred = 0;
 
       for (const candidate of pending) {
+        if (
+          !LinearAutopilotIntake.isRestartOutboxId(candidate.outboxId) &&
+          autopilotSourceMode(currentSettings.linearAutopilot, candidate.source) !== "queue"
+        ) {
+          deferred += 1;
+          continue;
+        }
         if (candidate.projectId === null) {
           deferred += 1;
           continue;

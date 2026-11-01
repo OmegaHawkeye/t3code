@@ -46,7 +46,10 @@ const project = {
   deletedAt: null,
 } satisfies Project;
 
-const harness = (projectDefaultModelSelection: ModelSelection | null = modelSelection) => {
+const harness = (
+  projectDefaultModelSelection: ModelSelection | null = modelSelection,
+  intakeMode: "disabled" | "shadow" | "queue" = "queue",
+) => {
   const launches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotReadOnlyLaunchInput> = [];
   const implementationLaunches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotImplementationLaunchInput> =
     [];
@@ -58,7 +61,7 @@ const harness = (projectDefaultModelSelection: ModelSelection | null = modelSele
       TicketSourceFeedback.TicketSourceFeedback,
       TicketSourceFeedback.TicketSourceFeedback.of({ update: () => Effect.void }),
     ),
-    ServerSettings.ServerSettingsService.layerTest(),
+    ServerSettings.ServerSettingsService.layerTest({ linearAutopilot: { mode: intakeMode } }),
     Layer.mock(ProjectService.ProjectService)({
       getById: () =>
         Effect.succeedSome({ ...project, defaultModelSelection: projectDefaultModelSelection }),
@@ -246,6 +249,62 @@ it.effect("launches planning once from the durable eligible outbox", () => {
       launched: 0,
       deferred: 0,
     });
+  }).pipe(Effect.provide(setup.layer));
+});
+
+const ingestIssue = Effect.gen(function* () {
+  const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+  yield* intake.ingest({
+    eventId: null,
+    workspaceId: "workspace-1",
+    issueId: "issue-1",
+    identifier: "OME-223",
+    title: "Linear autopilot",
+    url: "https://linear.app/ome/issue/OME-223",
+    description: "Implement the plan",
+    projectId,
+    sourceUpdatedAt: DateTime.formatIso(now),
+    observedAt: DateTime.formatIso(now),
+  });
+  return intake;
+});
+
+it.effect("holds intake entries while their source is not in queue mode", () => {
+  const setup = harness(modelSelection, "shadow");
+  return Effect.gen(function* () {
+    const intake = yield* ingestIssue;
+    const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
+    assert.deepStrictEqual(yield* dispatcher.dispatchPending(10), {
+      candidates: 1,
+      launched: 0,
+      deferred: 1,
+    });
+    assert.equal((yield* intake.listPending(10)).length, 1);
+    assert.deepStrictEqual(setup.launches, []);
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("dispatches a human restart while intake is off", () => {
+  const setup = harness(modelSelection, "disabled");
+  return Effect.gen(function* () {
+    const intake = yield* ingestIssue;
+    const [entry] = yield* intake.listPending(10);
+    assert.isDefined(entry);
+    yield* intake.markDispatched(entry.outboxId, now);
+    yield* intake.requeue({
+      outboxId: LinearAutopilotIntake.restartOutboxId("run-1"),
+      workspaceId: "workspace-1",
+      issueId: "issue-1",
+      createdAt: now,
+    });
+
+    const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
+    assert.deepStrictEqual(yield* dispatcher.dispatchPending(10), {
+      candidates: 1,
+      launched: 1,
+      deferred: 0,
+    });
+    assert.equal(setup.launches.length, 1);
   }).pipe(Effect.provide(setup.layer));
 });
 

@@ -25,18 +25,17 @@ const make = Effect.gen(function* () {
   const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
   const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
 
-  const runOnce = settings.getSettings.pipe(
+  const pollIntake = settings.getSettings.pipe(
     Effect.flatMap((current) => {
       const config = current.linearAutopilot;
       if (config.mode === "disabled") return Effect.void;
       return Effect.flatMap(
         Effect.clockWith((clock) => clock.currentTimeMillis),
-        (nowMs) => {
-          const pollEffect =
-            config.mode === "shadow"
-              ? poll.pollShadow({ config, nowMs })
-              : poll.pollQueue({ config, nowMs });
-          return pollEffect.pipe(
+        (nowMs) =>
+          (config.mode === "shadow"
+            ? poll.pollShadow({ config, nowMs })
+            : poll.pollQueue({ config, nowMs })
+          ).pipe(
             Effect.tap((result) =>
               Effect.logInfo("Linear autopilot intake poll completed", {
                 pagesRead: result.pagesRead,
@@ -46,27 +45,29 @@ const make = Effect.gen(function* () {
                 incomplete: result.incomplete,
               }),
             ),
-            Effect.flatMap(() =>
-              config.mode === "queue"
-                ? dispatcher.dispatchPending(20).pipe(
-                    Effect.tap((result) =>
-                      Effect.logInfo("Linear autopilot queue dispatch completed", result),
-                    ),
-                    Effect.flatMap(() => reconciler.reconcile()),
-                    Effect.tap((result) =>
-                      Effect.logInfo("Linear autopilot phase reconciliation completed", result),
-                    ),
-                    Effect.flatMap(() => dispatcher.dispatchApproved(20)),
-                    Effect.tap((result) =>
-                      Effect.logInfo("Linear autopilot implementation dispatch completed", result),
-                    ),
-                  )
-                : Effect.void,
-            ),
-          );
-        },
+          ),
       );
     }),
+  );
+
+  // Runs already admitted keep moving whatever the intake modes are: GitHub and Slack queue
+  // through webhooks while Linear intake is off, and a restart is queued by a human.
+  const advanceRuns = dispatcher.dispatchPending(20).pipe(
+    Effect.tap((result) => Effect.logInfo("Linear autopilot queue dispatch completed", result)),
+    Effect.flatMap(() => reconciler.reconcile()),
+    Effect.tap((result) =>
+      Effect.logInfo("Linear autopilot phase reconciliation completed", result),
+    ),
+    Effect.flatMap(() => dispatcher.dispatchApproved(20)),
+    Effect.tap((result) =>
+      Effect.logInfo("Linear autopilot implementation dispatch completed", result),
+    ),
+  );
+
+  // A failed Linear poll must not hold up runs from other sources.
+  const runOnce = pollIntake.pipe(
+    Effect.catchCause(() => Effect.logWarning("Linear autopilot intake poll failed")),
+    Effect.flatMap(() => advanceRuns),
     Effect.catchCause(() => Effect.logWarning("Linear autopilot worker tick failed")),
     Effect.asVoid,
   );

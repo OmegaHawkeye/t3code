@@ -122,6 +122,12 @@ const IssueContext = Schema.Struct({
   snapshotHash: Schema.String,
 });
 
+const RESTART_OUTBOX_PREFIX = "restart:";
+
+/** Restarts are queued by a human, so they dispatch even while their source's intake is off. */
+export const restartOutboxId = (runId: string) => `${RESTART_OUTBOX_PREFIX}${runId}`;
+export const isRestartOutboxId = (outboxId: string) => outboxId.startsWith(RESTART_OUTBOX_PREFIX);
+
 export class LinearAutopilotIntakeRepository extends Context.Service<
   LinearAutopilotIntakeRepository,
   {

@@ -239,7 +239,7 @@ export function WorkflowRunDetails({
       </div>
       <p className="text-sm text-muted-foreground">
         {run.state === "queued"
-          ? "Waiting to start planning. Autopilot picks it up while intake is set to Queue."
+          ? "Waiting to start planning. Autopilot picks up queued runs every 5 minutes."
           : run.workflow === null
             ? "This run started before workflows were recorded, so there is no graph to show."
             : finished

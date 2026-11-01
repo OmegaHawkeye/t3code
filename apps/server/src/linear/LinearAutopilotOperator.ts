@@ -257,7 +257,7 @@ const make = Effect.gen(function* () {
             const next = yield* runs.createNextGeneration({ runId: run.runId, createdAt: now });
             if (next === null) return null;
             yield* intake.requeue({
-              outboxId: `restart:${next.runId}`,
+              outboxId: LinearAutopilotIntake.restartOutboxId(next.runId),
               workspaceId: next.workspaceId,
               issueId: next.issueId,
               createdAt: now,

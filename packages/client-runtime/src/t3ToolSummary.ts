@@ -302,6 +302,23 @@ export function summarizeT3ToolCalls(
     case "worktree-list":
       label = phrase("Listed", "list", `workspace branches ${times}`);
       break;
+    case "autopilot-run-list":
+      label = phrase("Listed", "list", `Autopilot runs ${times}`);
+      break;
+    case "autopilot-run-cancel":
+      label = phrase(
+        "Cancelled",
+        "cancel",
+        quantity(countEntities(entityIds("runId")), "Autopilot run"),
+      );
+      break;
+    case "autopilot-run-restart":
+      label = phrase(
+        "Restarted",
+        "restart",
+        quantity(countEntities(selected.map((call) => id(call.input?.runId))), "Autopilot run"),
+      );
+      break;
     case "worktree-status":
       label = phrase("Checked", "check", `worktree status ${times}`);
       break;
