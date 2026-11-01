@@ -5,6 +5,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
+import { externalHref } from "../../lib/externalHref";
 import { runPrimaryHttp } from "../../lib/runtime";
 import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
@@ -158,7 +159,7 @@ export function LinearAutopilotApprovals() {
               <div>
                 <h2 className="font-medium">
                   <a
-                    href={item.url}
+                    href={externalHref(item.url) ?? undefined}
                     target="_blank"
                     rel="noreferrer"
                     className="underline underline-offset-4"

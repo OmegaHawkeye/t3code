@@ -71,6 +71,8 @@ import {
   LinearAutopilotApproveResult,
   LinearAutopilotCancelRunRequest,
   LinearAutopilotCancelRunResult,
+  LinearAutopilotRestartRunRequest,
+  LinearAutopilotRestartRunResult,
   LinearAutopilotRunSummaries,
   LinearAutopilotPendingApprovals,
   LinearAutopilotCatalog,
@@ -783,6 +785,14 @@ class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopil
       headers: OptionalBearerHeaders,
       payload: LinearAutopilotCancelRunRequest,
       success: LinearAutopilotCancelRunResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("restartRun", "/api/linear-autopilot/runs/restart", {
+      headers: OptionalBearerHeaders,
+      payload: LinearAutopilotRestartRunRequest,
+      success: LinearAutopilotRestartRunResult,
       error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}

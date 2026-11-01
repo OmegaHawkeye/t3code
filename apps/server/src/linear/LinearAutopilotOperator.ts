@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   CommandId,
@@ -64,6 +65,16 @@ export class LinearAutopilotOperator extends Context.Service<
       readonly expectedRevision: number;
       readonly cancelledBy: string;
     }) => Effect.Effect<boolean, PersistenceErrors.PersistenceSqlError>;
+    /**
+     * Starts the ticket over from planning in a new run, pinned to the project's current
+     * workflow. A paused run is cancelled first; failed and cancelled runs restart as they are.
+     * Returns the new run ID, or null when the run moved on or the ticket already has a newer run.
+     */
+    readonly restartRun: (input: {
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly requestedBy: string;
+    }) => Effect.Effect<string | null, PersistenceErrors.PersistenceSqlError>;
   }
 >()("t3/linear/LinearAutopilotOperator") {}
 
@@ -79,6 +90,7 @@ const isActiveAttempt = (
 } => attempt.status === "pending" || attempt.status === "running" || attempt.status === "unknown";
 
 const make = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
   const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
@@ -223,11 +235,54 @@ const make = Effect.gen(function* () {
       return true;
     });
 
+  const restartRun: LinearAutopilotOperator["Service"]["restartRun"] = (input) =>
+    Effect.gen(function* () {
+      const run = yield* runs.getById(input.runId);
+      if (run === null || run.revision !== input.expectedRevision) return null;
+      if (run.state === "paused") {
+        const cancelled = yield* cancelRun({
+          runId: run.runId,
+          expectedRevision: run.revision,
+          cancelledBy: input.requestedBy,
+        });
+        if (!cancelled) return null;
+      } else if (run.state !== "failed" && run.state !== "cancelled") {
+        return null;
+      }
+      // The new run and its dispatch entry land together so a restart is never half-queued.
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const now = yield* DateTime.now;
+            const next = yield* runs.createNextGeneration({ runId: run.runId, createdAt: now });
+            if (next === null) return null;
+            yield* intake.requeue({
+              outboxId: `restart:${next.runId}`,
+              workspaceId: next.workspaceId,
+              issueId: next.issueId,
+              createdAt: now,
+            });
+            return next.runId;
+          }),
+        )
+        .pipe(
+          Effect.catchTags({
+            SqlError: (cause) =>
+              Effect.fail(
+                PersistenceErrors.toPersistenceSqlError("LinearAutopilotOperator.restartRun")(
+                  cause,
+                ),
+              ),
+          }),
+        );
+    });
+
   return LinearAutopilotOperator.of({
     listPendingApprovals,
     approve: approval.approve,
     listRuns,
     cancelRun,
+    restartRun,
   });
 });
 

@@ -527,7 +527,14 @@ function ProjectRunsView({
         />
         <aside className="rounded-xl border p-4" aria-label="Run details">
           {run ? (
-            <WorkflowRunDetails key={run.runId} run={run} onCancelled={refresh} />
+            <WorkflowRunDetails
+              key={`${run.runId}:${run.revision}`}
+              run={run}
+              onChanged={(selectRunId) => {
+                if (selectRunId !== undefined) setSelectedRunId(selectRunId);
+                refresh();
+              }}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">
               Runs appear here once Autopilot picks up a ticket for this project.

@@ -7,10 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
-import { ExternalLinkIcon, MessageSquareIcon } from "lucide-react";
+import { ExternalLinkIcon, MessageSquareIcon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { PrimaryEnvironmentHttpClient } from "../../../environments/primary/httpClient";
+import { externalHref } from "../../../lib/externalHref";
 import { cn } from "../../../lib/utils";
 import { runPrimaryHttp } from "../../../lib/runtime";
 import { usePrimaryEnvironmentId } from "../../../state/environments";
@@ -33,6 +34,8 @@ const STATE_LABEL: Record<LinearAutopilotRunState, string> = {
   failed: "Failed",
   cancelled: "Cancelled",
 };
+
+const STALE_MESSAGE = "The run moved on since this list loaded. Refresh and try again.";
 
 export const isFinishedRun = (state: LinearAutopilotRunState) =>
   state === "delivered" || state === "failed" || state === "cancelled";
@@ -175,40 +178,53 @@ export function WorkflowRunList({
 
 export function WorkflowRunDetails({
   run,
-  onCancelled,
+  onChanged,
 }: {
   readonly run: LinearAutopilotRunSummary;
-  readonly onCancelled: () => void;
+  /** Called after a cancel or restart; a restart passes the new run to select. */
+  readonly onChanged: (selectRunId?: string) => void;
 }) {
   const environmentId = usePrimaryEnvironmentId();
-  const [confirming, setConfirming] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
+  const [confirming, setConfirming] = useState<"cancel" | "restart" | null>(null);
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const finished = isFinishedRun(run.state);
+  const restartable = run.state === "paused" || run.state === "failed" || run.state === "cancelled";
+  const ticketHref = externalHref(run.url);
+  const payload = { runId: run.runId, expectedRevision: run.revision };
 
-  const cancel = async () => {
-    setCancelling(true);
+  const act = async (action: "cancel" | "restart") => {
+    setBusy(true);
     setMessage(null);
     try {
-      const result = await runPrimaryHttp(
-        PrimaryEnvironmentHttpClient.pipe(
-          Effect.flatMap((client) =>
-            client.linearAutopilot.cancelRun({
-              headers: {},
-              payload: { runId: run.runId, expectedRevision: run.revision },
-            }),
+      if (action === "cancel") {
+        const result = await runPrimaryHttp(
+          PrimaryEnvironmentHttpClient.pipe(
+            Effect.flatMap((client) => client.linearAutopilot.cancelRun({ headers: {}, payload })),
           ),
-        ),
-      );
-      setMessage(
-        result.cancelled ? null : "The run moved on since this list loaded. Refresh and try again.",
-      );
-      onCancelled();
+        );
+        if (!result.cancelled) setMessage(STALE_MESSAGE);
+        onChanged();
+      } else {
+        const result = await runPrimaryHttp(
+          PrimaryEnvironmentHttpClient.pipe(
+            Effect.flatMap((client) => client.linearAutopilot.restartRun({ headers: {}, payload })),
+          ),
+        );
+        if (result.runId === null) {
+          setMessage(
+            "This ticket can't restart from this run. It moved on, or the ticket already has a newer run.",
+          );
+          onChanged();
+        } else {
+          onChanged(result.runId);
+        }
+      }
     } catch {
-      setMessage("Could not cancel the run. Check the environment connection and try again.");
+      setMessage(`Could not ${action} the run. Check the environment connection and try again.`);
     }
-    setCancelling(false);
-    setConfirming(false);
+    setBusy(false);
+    setConfirming(null);
   };
 
   return (
@@ -222,13 +238,15 @@ export function WorkflowRunDetails({
         <p className="text-sm text-muted-foreground">{run.title ?? "Untitled ticket"}</p>
       </div>
       <p className="text-sm text-muted-foreground">
-        {run.workflow === null
-          ? "This run started before workflows were recorded, so there is no graph to show."
-          : finished
-            ? "The canvas shows the workflow this run used and how many retries each loop took."
-            : run.state === "paused"
-              ? "Stopped and waiting for a human. The highlighted phase is where it stopped."
-              : "The highlighted phase is where the run is now. It keeps the workflow it started with, even if the project workflow changes."}
+        {run.state === "queued"
+          ? "Waiting to start planning. Autopilot picks it up while intake is set to Queue."
+          : run.workflow === null
+            ? "This run started before workflows were recorded, so there is no graph to show."
+            : finished
+              ? "The canvas shows the workflow this run used and how many retries each loop took."
+              : run.state === "paused"
+                ? "Stopped and waiting for a human. The highlighted phase is where it stopped."
+                : "The highlighted phase is where the run is now. It keeps the workflow it started with, even if the project workflow changes."}
       </p>
       <div className="flex flex-wrap gap-2">
         {run.threadId !== null && environmentId !== null ? (
@@ -247,48 +265,67 @@ export function WorkflowRunDetails({
             <MessageSquareIcon aria-hidden /> Open thread
           </Button>
         ) : null}
-        {run.url !== null ? (
+        {ticketHref !== null ? (
           <Button
             variant="ghost"
             size="compact"
-            render={<a href={run.url} target="_blank" rel="noreferrer" />}
+            render={<a href={ticketHref} target="_blank" rel="noreferrer" />}
           >
             <ExternalLinkIcon aria-hidden /> Open ticket
           </Button>
         ) : null}
       </div>
-      {!finished ? (
-        confirming ? (
-          <div className="space-y-2 rounded-lg border border-destructive/40 p-3">
-            <p className="text-sm">
-              Cancel this run? The agent working on it is interrupted and the run can&apos;t be
-              resumed. The ticket keeps its current status.
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="destructive"
-                size="compact"
-                disabled={cancelling}
-                onClick={() => void cancel()}
-              >
-                Cancel run
-              </Button>
-              <Button
-                variant="ghost"
-                size="compact"
-                disabled={cancelling}
-                onClick={() => setConfirming(false)}
-              >
-                Keep running
-              </Button>
-            </div>
+      {confirming !== null ? (
+        <div
+          className={cn(
+            "space-y-2 rounded-lg border p-3",
+            confirming === "cancel" && "border-destructive/40",
+          )}
+        >
+          <p className="text-sm">
+            {confirming === "cancel"
+              ? "Cancel this run? The agent working on it is interrupted. The ticket keeps its current status, and you can restart it from planning later."
+              : run.state === "paused"
+                ? "Restart this ticket from planning? This run is cancelled and a new run starts with the project's current workflow."
+                : "Restart this ticket from planning? A new run starts with the project's current workflow."}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant={confirming === "cancel" ? "destructive" : "default"}
+              size="compact"
+              disabled={busy}
+              onClick={() => void act(confirming)}
+            >
+              {confirming === "cancel" ? "Cancel run" : "Restart from plan"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="compact"
+              disabled={busy}
+              onClick={() => setConfirming(null)}
+            >
+              Back
+            </Button>
           </div>
-        ) : (
-          <Button variant="ghost-destructive" size="compact" onClick={() => setConfirming(true)}>
-            Cancel run…
-          </Button>
-        )
-      ) : null}
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {restartable ? (
+            <Button variant="outline" size="compact" onClick={() => setConfirming("restart")}>
+              <RotateCcwIcon aria-hidden /> Restart from plan…
+            </Button>
+          ) : null}
+          {!finished ? (
+            <Button
+              variant="ghost-destructive"
+              size="compact"
+              onClick={() => setConfirming("cancel")}
+            >
+              Cancel run…
+            </Button>
+          ) : null}
+        </div>
+      )}
       {message ? (
         <p role="alert" className="text-sm text-destructive-foreground">
           {message}

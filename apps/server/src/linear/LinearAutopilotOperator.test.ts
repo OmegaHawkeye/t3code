@@ -194,3 +194,77 @@ it.effect("lists a project's runs with their pinned cursor and cancels the runni
     assert.deepStrictEqual(interrupted, ["thread-plan"]);
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect("restarts a stopped ticket as a fresh queued run and queues it for dispatch", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("trusted-project-1");
+    const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+    yield* intake.ingest({
+      eventId: null,
+      workspaceId: "workspace-1",
+      issueId: "issue-3",
+      identifier: "OME-241",
+      title: "Restartable run",
+      url: "https://linear.app/ome/issue/OME-241",
+      description: "Bounded description",
+      projectId,
+      sourceUpdatedAt: DateTime.formatIso(now),
+      observedAt: DateTime.formatIso(now),
+    });
+    for (const pending of yield* intake.listPending(20)) {
+      yield* intake.markDispatched(pending.outboxId, now);
+    }
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    const { run } = yield* runs.createOrGetActive({
+      workspaceId: "workspace-1",
+      issueId: "issue-3",
+      projectId,
+      sourceUpdatedAt: now,
+      snapshotHash: "c".repeat(64),
+      createdAt: now,
+    });
+    yield* runs.transition({
+      runId: run.runId,
+      expectedRevision: 0,
+      nextState: "paused",
+      updatedAt: now,
+    });
+
+    const operator = yield* LinearAutopilotOperator.LinearAutopilotOperator;
+    const restartedId = yield* operator.restartRun({
+      runId: run.runId,
+      expectedRevision: 1,
+      requestedBy: "me",
+    });
+    assert.isNotNull(restartedId);
+    assert.equal((yield* runs.getById(run.runId))?.state, "cancelled");
+    const restarted = yield* runs.getById(restartedId!);
+    assert.equal(restarted?.state, "queued");
+    assert.equal(restarted?.generation, 2);
+    assert.isNull(restarted?.workflowJson);
+    // Dispatch finds the new run for the re-queued ticket rather than the cancelled one.
+    const pending = yield* intake.listPending(20);
+    assert.deepStrictEqual(
+      pending.map((item) => item.issueId),
+      ["issue-3"],
+    );
+    const { run: dispatched } = yield* runs.createOrGetActive({
+      workspaceId: "workspace-1",
+      issueId: "issue-3",
+      projectId,
+      sourceUpdatedAt: now,
+      snapshotHash: "c".repeat(64),
+      createdAt: now,
+    });
+    assert.equal(dispatched.runId, restartedId);
+
+    const cancelled = (yield* runs.getById(run.runId))!;
+    assert.isNull(
+      yield* operator.restartRun({
+        runId: run.runId,
+        expectedRevision: cancelled.revision,
+        requestedBy: "me",
+      }),
+    );
+  }).pipe(Effect.provide(layer)),
+);

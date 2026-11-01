@@ -103,6 +103,8 @@ const RunIdCodec = Schema.fromJsonString(
   ),
 );
 
+const encodeRunId = Schema.encodeEffect(RunIdCodec);
+
 const allowedTransitions: Readonly<
   Record<LinearAutopilotRunState, ReadonlyArray<LinearAutopilotRunState>>
 > = {
@@ -142,6 +144,16 @@ export class LinearAutopilotRunRepository extends Context.Service<
     readonly listRecoverable: (
       limit: number,
     ) => Effect.Effect<ReadonlyArray<LinearAutopilotRun>, PersistenceSqlError>;
+    /**
+     * Opens the next generation of a ticket whose latest run ended as failed or cancelled. The new
+     * run starts queued with no pinned workflow, so dispatch pins the project's current one.
+     * Returns null when the run is not the ticket's latest, is not finished that way, or another
+     * run is already active.
+     */
+    readonly createNextGeneration: (input: {
+      readonly runId: string;
+      readonly createdAt: DateTime.Utc;
+    }) => Effect.Effect<LinearAutopilotRun | null, PersistenceSqlError>;
     /** Most recently updated runs for one project, finished ones included. */
     readonly listRecentForProject: (
       input: typeof ProjectRunsRequest.Type,
@@ -480,6 +492,21 @@ const make = Effect.gen(function* () {
     `,
   });
 
+  const runIdFor = (
+    source: AutopilotTicketSource,
+    workspaceId: string,
+    issueId: string,
+    generation: number,
+  ) =>
+    Effect.gen(function* () {
+      const payload = yield* encodeRunId([source, workspaceId, issueId, generation]).pipe(
+        Effect.orDie,
+      );
+      return Hex.encode(
+        yield* crypto.digest("SHA-256", new TextEncoder().encode(payload)).pipe(Effect.orDie),
+      );
+    });
+
   return LinearAutopilotRunRepository.of({
     createOrGetActive: (input) =>
       sql
@@ -501,17 +528,7 @@ const make = Effect.gen(function* () {
             if (Option.isSome(latest)) return { run: latest.value, created: false };
 
             const generation = 1;
-            const runIdPayload = yield* Schema.encodeEffect(RunIdCodec)([
-              source,
-              input.workspaceId,
-              input.issueId,
-              generation,
-            ]).pipe(Effect.orDie);
-            const runId = Hex.encode(
-              yield* crypto
-                .digest("SHA-256", new TextEncoder().encode(runIdPayload))
-                .pipe(Effect.orDie),
-            );
+            const runId = yield* runIdFor(source, input.workspaceId, input.issueId, generation);
             const run = yield* insertRun({ ...input, source, generation, runId }).pipe(
               Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.insertRun:query")),
             );
@@ -525,6 +542,36 @@ const make = Effect.gen(function* () {
                 toPersistenceSqlError("LinearAutopilotRuns.createOrGetActive:transaction")(cause),
               ),
           }),
+        ),
+    createNextGeneration: (input) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const previous = yield* findById({ runId: input.runId });
+            if (Option.isNone(previous)) return null;
+            const run = previous.value;
+            if ((run.state !== "failed" && run.state !== "cancelled") || run.projectId === null)
+              return null;
+            const key = { source: run.source, workspaceId: run.workspaceId, issueId: run.issueId };
+            if (Option.isSome(yield* findActive(key))) return null;
+            const latest = yield* findLatest(key);
+            if (Option.isNone(latest) || latest.value.runId !== run.runId) return null;
+            const generation = run.generation + 1;
+            return yield* insertRun({
+              runId: yield* runIdFor(run.source, run.workspaceId, run.issueId, generation),
+              source: run.source,
+              workspaceId: run.workspaceId,
+              issueId: run.issueId,
+              projectId: run.projectId,
+              generation,
+              sourceUpdatedAt: run.sourceUpdatedAt,
+              snapshotHash: run.snapshotHash,
+              createdAt: input.createdAt,
+            });
+          }),
+        )
+        .pipe(
+          Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.createNextGeneration:query")),
         ),
     getById: (runId) =>
       findById({ runId }).pipe(

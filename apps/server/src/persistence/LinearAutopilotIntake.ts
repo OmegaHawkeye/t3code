@@ -145,6 +145,13 @@ export class LinearAutopilotIntakeRepository extends Context.Service<
       outboxId: string,
       dispatchedAt: DateTime.Utc,
     ) => Effect.Effect<void, PersistenceSqlError>;
+    /** Queues the stored issue snapshot for dispatch again under a caller-chosen stable ID. */
+    readonly requeue: (input: {
+      readonly outboxId: string;
+      readonly workspaceId: string;
+      readonly issueId: string;
+      readonly createdAt: DateTime.Utc;
+    }) => Effect.Effect<void, PersistenceSqlError>;
   }
 >()("t3/persistence/LinearAutopilotIntake/LinearAutopilotIntakeRepository") {}
 
@@ -278,6 +285,27 @@ const make = Effect.gen(function* () {
     `,
   });
 
+  const requeueRow = SqlSchema.void({
+    Request: Schema.Struct({
+      outboxId: Schema.String,
+      workspaceId: Schema.String,
+      issueId: Schema.String,
+      createdAt: Schema.DateTimeUtcFromString,
+    }),
+    execute: ({ outboxId, workspaceId, issueId, createdAt }) => sql`
+      INSERT INTO linear_autopilot_outbox (
+        outbox_id, source_kind, workspace_id, issue_id, source_updated_at, snapshot_hash,
+        identifier, title, url, description, t3_project_id, created_at
+      )
+      SELECT
+        ${outboxId}, source_kind, workspace_id, issue_id, source_updated_at, snapshot_hash,
+        identifier, title, url, description, t3_project_id, ${createdAt}
+      FROM linear_autopilot_issues
+      WHERE workspace_id = ${workspaceId} AND issue_id = ${issueId}
+      ON CONFLICT (outbox_id) DO NOTHING
+    `,
+  });
+
   const repository = LinearAutopilotIntakeRepository.of({
     ingestTicket: (payload) =>
       Schema.decodeUnknownEffect(AutopilotTicketIntakePayload)(payload).pipe(
@@ -389,6 +417,10 @@ const make = Effect.gen(function* () {
     markDispatched: (outboxId, dispatchedAt) =>
       markDispatchedRow({ outboxId, dispatchedAt }).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.markDispatched:query")),
+      ),
+    requeue: (input) =>
+      requeueRow(input).pipe(
+        Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.requeue:query")),
       ),
   });
   return repository;

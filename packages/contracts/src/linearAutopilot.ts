@@ -108,3 +108,10 @@ export const LinearAutopilotCancelRunRequest = Schema.Struct({
 });
 
 export const LinearAutopilotCancelRunResult = Schema.Struct({ cancelled: Schema.Boolean });
+
+export const LinearAutopilotRestartRunRequest = LinearAutopilotCancelRunRequest;
+
+export const LinearAutopilotRestartRunResult = Schema.Struct({
+  /** The new run, or null when the run moved on or the ticket already has a newer run. */
+  runId: Schema.NullOr(Schema.String),
+});
