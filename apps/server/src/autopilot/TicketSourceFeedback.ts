@@ -36,7 +36,9 @@ const make = Effect.gen(function* () {
   const github = yield* GitHubRest.GitHubRest;
   const http = yield* HttpClient.HttpClient;
 
-  const update: TicketSourceFeedback["Service"]["update"] = (input) =>
+  const update: TicketSourceFeedback["Service"]["update"] = Effect.fn(
+    "TicketSourceFeedback.update",
+  )((input) =>
     Effect.gen(function* () {
       const message = [
         `**T3 Autopilot:** ${statusMessage[input.status]}`,
@@ -82,7 +84,8 @@ const make = Effect.gen(function* () {
           )
           .pipe(Effect.ignoreCause);
       }
-    }).pipe(Effect.ignoreCause);
+    }).pipe(Effect.ignoreCause),
+  );
 
   return TicketSourceFeedback.of({ update });
 });

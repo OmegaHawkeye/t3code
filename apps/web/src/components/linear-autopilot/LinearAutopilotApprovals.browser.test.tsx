@@ -1,13 +1,7 @@
-import {
-  createMemoryHistory,
-  createRootRoute,
-  createRouter,
-  RouterProvider,
-} from "@tanstack/react-router";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+
+import { render } from "../../../test/render";
 
 const { runPrimaryHttp } = vi.hoisted(() => ({ runPrimaryHttp: vi.fn() }));
 
@@ -20,11 +14,7 @@ vi.mock(import("../../lib/runtime"), () => ({ runPrimaryHttp }));
 
 import { LinearAutopilotApprovals } from "./LinearAutopilotApprovals";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   runPrimaryHttp.mockReset().mockResolvedValueOnce([
     {
       runId: "run-1",
@@ -43,40 +33,24 @@ beforeEach(() => {
       reviewThreadId: null,
     },
   ]);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 
 describe("LinearAutopilotApprovals", () => {
   it("shows the reviewed plan, approves it, and removes it from the pending list", async () => {
-    const router = createRouter({
-      routeTree: createRootRoute({ component: LinearAutopilotApprovals }),
-      history: createMemoryHistory({ initialEntries: ["/settings/linear-autopilot/approvals"] }),
+    setup();
+    await using screen = await render(<LinearAutopilotApprovals />, {
+      router: "/settings/linear-autopilot/approvals",
     });
-    await router.load();
-    await act(async () => root.render(<RouterProvider router={router} />));
 
-    expect(container.textContent).toContain("Build the workflow.");
-    expect(container.textContent).toContain("The plan is safe.");
+    await expect.element(screen.getByText("Build the workflow.")).toBeVisible();
+    await expect.element(screen.getByText("The plan is safe.")).toBeVisible();
     runPrimaryHttp.mockResolvedValueOnce({ approved: true }).mockResolvedValueOnce([]);
 
-    await userEvent.click(
-      [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "Approve this plan",
-      )!,
-    );
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    await userEvent.click(screen.getByRole("button", { name: "Approve this plan" }));
 
-    expect(container.textContent).toContain(
-      "OME-223: implementation queued from this exact approved plan.",
-    );
-    expect(container.textContent).toContain("No plans are waiting for approval.");
+    await expect
+      .element(screen.getByText("OME-223: implementation queued from this exact approved plan."))
+      .toBeVisible();
+    await expect.element(screen.getByText("No plans are waiting for approval.")).toBeVisible();
   });
 });

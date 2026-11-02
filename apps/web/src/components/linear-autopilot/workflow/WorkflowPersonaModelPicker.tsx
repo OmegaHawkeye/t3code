@@ -2,11 +2,7 @@ import type { ModelSelection } from "@t3tools/contracts";
 import { createModelSelection, formatModelSlugName } from "@t3tools/shared/model";
 
 import { getCustomModelOptionsByInstance } from "../../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../../providerInstances";
+import { providerInstanceEntriesFor } from "../../../providerInstances";
 import { useEnvironmentProviders } from "../../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../../state/server";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
@@ -29,10 +25,11 @@ function useScopedProviders() {
 export function useWorkflowModelName() {
   const providers = useScopedProviders();
   return (selection: ModelSelection) => {
-    const model = providers
-      .find((provider) => provider.instanceId === selection.instanceId)
-      ?.models.find((candidate) => candidate.slug === selection.model);
-    return model ? getTriggerDisplayModelName(model) : formatModelSlugName(selection.model);
+    const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+    const model = provider?.models.find((candidate) => candidate.slug === selection.model);
+    return model
+      ? getTriggerDisplayModelName(model, provider?.driver)
+      : formatModelSlugName(selection.model);
   };
 }
 
@@ -52,9 +49,7 @@ export function WorkflowPersonaModelPicker({
   const settings = useScopedSettings();
   const { environment } = useSettingsScope();
   const providers = useScopedProviders();
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
-  );
+  const entries = providerInstanceEntriesFor(providers, settings, null);
   const disabledReason = useScopedModelDisabledReason(settings, entries);
   const fallbackEntry = entries.find((entry) => entry.enabled && entry.isAvailable) ?? entries[0];
   const instanceId = value?.instanceId ?? fallbackEntry?.instanceId;

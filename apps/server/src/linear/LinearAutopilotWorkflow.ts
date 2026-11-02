@@ -73,7 +73,7 @@ export const startLinearAutopilotWorkflow = (
 };
 
 /** Reconstruct a known legacy checkpoint when upgrading a run created before workflow snapshots. */
-export const resumeLinearAutopilotWorkflow = (
+const resumeLinearAutopilotWorkflow = (
   definition: LinearAutopilotWorkflow,
   nodeId: string,
 ): LinearAutopilotWorkflowExecution => {
@@ -164,10 +164,3 @@ export const workflowNode = (
   workflow: LinearAutopilotWorkflow,
   id: string,
 ): LinearAutopilotWorkflowNode | undefined => nodeById(workflow, id);
-
-export const workflowEdge = (
-  workflow: LinearAutopilotWorkflow,
-  from: string,
-  outcome: LinearAutopilotWorkflowOutcome,
-): LinearAutopilotWorkflowEdge | undefined =>
-  workflow.edges.find((edge) => edge.from === from && edge.on === outcome);

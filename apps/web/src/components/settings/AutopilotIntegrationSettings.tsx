@@ -134,6 +134,7 @@ export function AutopilotIntegrationSettingsPanel({
       ? undefined
       : slackAppConfigurationUrl(window.location.origin);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the project list from the server once on mount.
   useEffect(() => {
     let cancelled = false;
     void runPrimaryHttp(

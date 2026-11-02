@@ -139,40 +139,46 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const launchImplementationFollowUp = (
-    run: LinearAutopilotRuns.LinearAutopilotRun,
-    phase: "verification" | "repair" | "delivery",
-    attemptNumber: number,
-    instruction: string,
-  ) =>
-    Effect.gen(function* () {
-      const implementation = yield* attempts.getLatest({
-        runId: run.runId,
-        phase: "implementation",
-      });
-      if (
-        implementation?.status !== "succeeded" ||
-        implementation.threadId === null ||
-        run.projectId === null
-      )
-        return false;
-      const projection = yield* threads
-        .getThreadProjection(ThreadId.make(implementation.threadId))
-        .pipe(Effect.result);
-      if (projection._tag === "Failure") return false;
-      yield* phaseLaunch.launchFollowUp({
-        runId: run.runId,
-        phase,
-        attemptNumber,
-        threadId: ThreadId.make(implementation.threadId),
-        projectId: run.projectId,
-        modelSelection: projection.success.thread.modelSelection,
-        instruction,
-      });
-      return true;
-    });
+  const launchImplementationFollowUp = Effect.fn(
+    "LinearAutopilotReconciler.launchImplementationFollowUp",
+  )(
+    (
+      run: LinearAutopilotRuns.LinearAutopilotRun,
+      phase: "verification" | "repair" | "delivery",
+      attemptNumber: number,
+      instruction: string,
+    ) =>
+      Effect.gen(function* () {
+        const implementation = yield* attempts.getLatest({
+          runId: run.runId,
+          phase: "implementation",
+        });
+        if (
+          implementation?.status !== "succeeded" ||
+          implementation.threadId === null ||
+          run.projectId === null
+        )
+          return false;
+        const projection = yield* threads
+          .getThreadProjection(ThreadId.make(implementation.threadId))
+          .pipe(Effect.result);
+        if (projection._tag === "Failure") return false;
+        yield* phaseLaunch.launchFollowUp({
+          runId: run.runId,
+          phase,
+          attemptNumber,
+          threadId: ThreadId.make(implementation.threadId),
+          projectId: run.projectId,
+          modelSelection: projection.success.thread.modelSelection,
+          instruction,
+        });
+        return true;
+      }),
+  );
 
-  const reconcile: LinearAutopilotReconciler["Service"]["reconcile"] = () =>
+  const reconcile: LinearAutopilotReconciler["Service"]["reconcile"] = Effect.fn(
+    "LinearAutopilotReconciler.reconcile",
+  )(() =>
     Effect.gen(function* () {
       const [recoverableRuns, currentSettings] = yield* Effect.all([
         runs.listRecoverable(100),
@@ -892,7 +898,8 @@ const make = Effect.gen(function* () {
         approvalsRequested,
         deferred,
       };
-    });
+    }),
+  );
 
   return LinearAutopilotReconciler.of({ reconcile });
 });

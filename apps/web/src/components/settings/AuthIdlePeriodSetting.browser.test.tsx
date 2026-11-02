@@ -1,8 +1,9 @@
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import type { ReactNode } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { EnvironmentId } from "@t3tools/contracts";
+
+import { render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   idlePeriodDays: 90,
@@ -45,52 +46,40 @@ import { AuthIdlePeriodSetting } from "./AuthIdlePeriodSetting";
 
 const environmentId = EnvironmentId.make("auth-idle-period-test");
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
+function setup() {
   state.idlePeriodDays = 90;
   state.update.mockReset();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
+}
 
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-});
+const renderSetting = () =>
+  render(<AuthIdlePeriodSetting environmentId={environmentId} environmentLabel="Test machine" />, {
+    router: false, // The setting renders no links.
+  });
+
+const idleInput = (container: HTMLElement) =>
+  container.querySelector<HTMLInputElement>(
+    'input[aria-label="Authentication idle period in days for Test machine"]',
+  )!;
 
 it("shows the current value and persists a valid change on blur", async () => {
-  await act(async () =>
-    root.render(
-      <AuthIdlePeriodSetting environmentId={environmentId} environmentLabel="Test machine" />,
-    ),
-  );
+  setup();
+  await using screen = await renderSetting();
+  const input = idleInput(screen.container);
+  expect(input.value).toBe("90");
+  expect(input.min).toBe("1");
+  expect(input.max).toBe("360");
+  expect(screen.container.textContent).toContain("does not shorten any existing session");
 
-  const input = container.querySelector<HTMLInputElement>(
-    'input[aria-label="Authentication idle period in days for Test machine"]',
-  );
-  expect(input?.value).toBe("90");
-  expect(input?.min).toBe("1");
-  expect(input?.max).toBe("360");
-  expect(container.textContent).toContain("does not shorten any existing session");
-
-  await userEvent.fill(input!, "120");
+  await userEvent.fill(input, "120");
   await userEvent.tab();
 
   expect(state.update).toHaveBeenCalledWith({ authIdlePeriodDays: 120 });
 });
 
 it("does not persist a value outside the supported range", async () => {
-  await act(async () =>
-    root.render(
-      <AuthIdlePeriodSetting environmentId={environmentId} environmentLabel="Test machine" />,
-    ),
-  );
-  const input = container.querySelector<HTMLInputElement>(
-    'input[aria-label="Authentication idle period in days for Test machine"]',
-  )!;
+  setup();
+  await using screen = await renderSetting();
+  const input = idleInput(screen.container);
 
   await userEvent.fill(input, "361");
   await userEvent.tab();

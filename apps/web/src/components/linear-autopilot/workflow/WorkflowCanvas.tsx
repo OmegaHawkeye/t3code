@@ -145,12 +145,14 @@ export function WorkflowCanvas({
   };
 
   // Fit once on mount; the parent remounts the canvas when it shows a different workflow.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the mounted viewport to fit the graph.
   useLayoutEffect(fit, []);
 
   const zoomAround = (factor: number, anchor: Point) =>
     setView((current) => zoomView(current, factor, anchor));
 
   // Wheel must be a non-passive native listener so scrolling pans the canvas, not the page.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a non-passive native wheel listener.
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;

@@ -77,7 +77,9 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const ticketFeedback = yield* TicketSourceFeedback.TicketSourceFeedback;
 
-  const dispatchPending: LinearAutopilotDispatcher["Service"]["dispatchPending"] = (limit) =>
+  const dispatchPending: LinearAutopilotDispatcher["Service"]["dispatchPending"] = Effect.fn(
+    "LinearAutopilotDispatcher.dispatchPending",
+  )((limit) =>
     Effect.gen(function* () {
       const pending = yield* intake.listPending(limit);
       const currentSettings = yield* settings.getSettings;
@@ -211,9 +213,12 @@ const make = Effect.gen(function* () {
       }
 
       return { candidates: pending.length, launched, deferred };
-    });
+    }),
+  );
 
-  const dispatchApproved: LinearAutopilotDispatcher["Service"]["dispatchApproved"] = (limit) =>
+  const dispatchApproved: LinearAutopilotDispatcher["Service"]["dispatchApproved"] = Effect.fn(
+    "LinearAutopilotDispatcher.dispatchApproved",
+  )((limit) =>
     Effect.gen(function* () {
       const recoverable = yield* runs.listRecoverable(limit);
       const currentSettings = yield* settings.getSettings;
@@ -350,7 +355,8 @@ const make = Effect.gen(function* () {
       }
 
       return { candidates: candidates.length, launched, deferred };
-    });
+    }),
+  );
 
   return LinearAutopilotDispatcher.of({ dispatchPending, dispatchApproved });
 });

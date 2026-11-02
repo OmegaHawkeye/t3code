@@ -57,97 +57,100 @@ const make = Effect.gen(function* () {
   const pollState = yield* LinearAutopilotPollState.LinearAutopilotPollStateRepository;
   const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
 
-  const pollConfigured = (
-    config: LinearAutopilotIntakePolicy.LinearAutopilotIntakeConfig,
-    nowMs: number,
-    queueEligible: boolean,
-  ) =>
-    Effect.gen(function* () {
-      const requiredMode = queueEligible ? "queue" : "shadow";
-      if (config.mode !== requiredMode || config.teamId.length === 0) {
-        return {
-          pagesRead: 0,
-          issuesEvaluated: 0,
-          eligible: 0,
-          queued: 0,
-          decisionsByReason: {},
-          incomplete: false,
-        };
-      }
+  const pollConfigured = Effect.fn("LinearAutopilotPoll.pollConfigured")(
+    (
+      config: LinearAutopilotIntakePolicy.LinearAutopilotIntakeConfig,
+      nowMs: number,
+      queueEligible: boolean,
+    ) =>
+      Effect.gen(function* () {
+        const requiredMode = queueEligible ? "queue" : "shadow";
+        if (config.mode !== requiredMode || config.teamId.length === 0) {
+          return {
+            pagesRead: 0,
+            issuesEvaluated: 0,
+            eligible: 0,
+            queued: 0,
+            decisionsByReason: {},
+            incomplete: false,
+          };
+        }
 
-      const checkpoint = yield* pollState.getCheckpoint(config.teamId);
-      const checkpointMs =
-        checkpoint === null ? nowMs - INITIAL_LOOKBACK_MS : DateTime.toEpochMillis(checkpoint);
-      const updatedSince = DateTime.formatIso(
-        DateTime.makeUnsafe(Math.max(0, checkpointMs - OVERLAP_MS)),
-      );
-      const session = yield* runService.begin({ teamId: config.teamId });
+        const checkpoint = yield* pollState.getCheckpoint(config.teamId);
+        const checkpointMs =
+          checkpoint === null ? nowMs - INITIAL_LOOKBACK_MS : DateTime.toEpochMillis(checkpoint);
+        const updatedSince = DateTime.formatIso(
+          DateTime.makeUnsafe(Math.max(0, checkpointMs - OVERLAP_MS)),
+        );
+        const session = yield* runService.begin({ teamId: config.teamId });
 
-      let after: string | null = null;
-      let pagesRead = 0;
-      let issuesEvaluated = 0;
-      let eligible = 0;
-      let queued = 0;
-      let hasNextPage = true;
-      const decisionsByReason: Record<string, number> = {};
+        let after: string | null = null;
+        let pagesRead = 0;
+        let issuesEvaluated = 0;
+        let eligible = 0;
+        let queued = 0;
+        let hasNextPage = true;
+        const decisionsByReason: Record<string, number> = {};
 
-      while (hasNextPage && pagesRead < MAX_PAGES) {
-        const page: LinearAutopilotClient.LinearAutopilotIssuePage = yield* session.listIssuesPage({
-          updatedSince,
-          after,
-        });
-        pagesRead += 1;
-        for (const issue of page.issues) {
-          issuesEvaluated += 1;
-          const decision = LinearAutopilotIntakePolicy.evaluateLinearAutopilotIntake(config, {
-            teamId: issue.team.id,
-            stateId: issue.state.id,
-            labelIds: issue.labels.nodes.map(({ id }) => id),
-            projectId: issue.project?.id ?? null,
-          });
-          decisionsByReason[decision.reason] = (decisionsByReason[decision.reason] ?? 0) + 1;
-          if (decision.eligible) {
-            eligible += 1;
-            if (queueEligible) {
-              const inserted = yield* intake.ingestTicket({
-                ticket: {
-                  source: "linear",
-                  sourceAccountId: issue.team.id,
-                  sourceTicketId: issue.id,
-                  identifier: issue.identifier,
-                  title: issue.title,
-                  url: issue.url,
-                  description: issue.description ?? "",
-                  projectId: decision.projectId,
-                  sourceUpdatedAt: DateTime.formatIso(issue.updatedAt),
-                },
-                eventId: null,
-                observedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
-              });
-              if (inserted) queued += 1;
+        while (hasNextPage && pagesRead < MAX_PAGES) {
+          const page: LinearAutopilotClient.LinearAutopilotIssuePage =
+            yield* session.listIssuesPage({
+              updatedSince,
+              after,
+            });
+          pagesRead += 1;
+          for (const issue of page.issues) {
+            issuesEvaluated += 1;
+            const decision = LinearAutopilotIntakePolicy.evaluateLinearAutopilotIntake(config, {
+              teamId: issue.team.id,
+              stateId: issue.state.id,
+              labelIds: issue.labels.nodes.map(({ id }) => id),
+              projectId: issue.project?.id ?? null,
+            });
+            decisionsByReason[decision.reason] = (decisionsByReason[decision.reason] ?? 0) + 1;
+            if (decision.eligible) {
+              eligible += 1;
+              if (queueEligible) {
+                const inserted = yield* intake.ingestTicket({
+                  ticket: {
+                    source: "linear",
+                    sourceAccountId: issue.team.id,
+                    sourceTicketId: issue.id,
+                    identifier: issue.identifier,
+                    title: issue.title,
+                    url: issue.url,
+                    description: issue.description ?? "",
+                    projectId: decision.projectId,
+                    sourceUpdatedAt: DateTime.formatIso(issue.updatedAt),
+                  },
+                  eventId: null,
+                  observedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+                });
+                if (inserted) queued += 1;
+              }
             }
           }
+          hasNextPage = page.hasNextPage;
+          if (hasNextPage && (page.endCursor === null || page.endCursor === after)) {
+            return yield* new LinearAutopilotClient.LinearAutopilotClientError({
+              reason: "missing-data",
+            });
+          }
+          after = page.endCursor;
         }
-        hasNextPage = page.hasNextPage;
-        if (hasNextPage && (page.endCursor === null || page.endCursor === after)) {
-          return yield* new LinearAutopilotClient.LinearAutopilotClientError({
-            reason: "missing-data",
+
+        const incomplete = hasNextPage;
+        if (!incomplete) {
+          yield* pollState.advanceCheckpoint({
+            teamId: config.teamId,
+            checkpointUpdatedAt: DateTime.makeUnsafe(nowMs),
+            updatedAt: DateTime.makeUnsafe(nowMs),
           });
         }
-        after = page.endCursor;
-      }
 
-      const incomplete = hasNextPage;
-      if (!incomplete) {
-        yield* pollState.advanceCheckpoint({
-          teamId: config.teamId,
-          checkpointUpdatedAt: DateTime.makeUnsafe(nowMs),
-          updatedAt: DateTime.makeUnsafe(nowMs),
-        });
-      }
-
-      return { pagesRead, issuesEvaluated, eligible, queued, decisionsByReason, incomplete };
-    });
+        return { pagesRead, issuesEvaluated, eligible, queued, decisionsByReason, incomplete };
+      }),
+  );
 
   const pollShadow: LinearAutopilotPoll["Service"]["pollShadow"] = ({ config, nowMs }) =>
     pollConfigured(config, nowMs, false);

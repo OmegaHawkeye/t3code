@@ -208,6 +208,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the Linear catalog from the server when the team changes.
   useEffect(() => {
     let cancelled = false;
     void fetchAutopilotCatalog(teamId || undefined).then((result) => {
@@ -644,11 +645,12 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                     ) : null}
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>
-                        {project.title} —{" "}
+                        {project.title} (
                         {project.repositoryIdentity?.displayName ??
                           (project.repositoryIdentity?.name
                             ? `${project.repositoryIdentity.owner ? `${project.repositoryIdentity.owner}/` : ""}${project.repositoryIdentity.name}`
                             : project.workspaceRoot)}
+                        )
                       </option>
                     ))}
                     {linearProject ? (

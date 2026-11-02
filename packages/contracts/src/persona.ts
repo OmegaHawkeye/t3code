@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Upper bound on resolved persona-instruction text; the orchestration layer resolves and bounds it before it reaches the adapter. */
-export const RESOLVED_PERSONA_INSTRUCTIONS_MAX_LENGTH = 20_000;
+const RESOLVED_PERSONA_INSTRUCTIONS_MAX_LENGTH = 20_000;
 
 /**
  * A persona's instructions, already resolved and length-bounded, pinned per run.

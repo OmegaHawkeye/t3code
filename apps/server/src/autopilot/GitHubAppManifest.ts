@@ -90,48 +90,52 @@ const make = Effect.gen(function* () {
       catch: () => new GitHubAppManifestError({ reason: "invalid-origin" }),
     });
 
-  const start: GitHubAppManifest["Service"]["start"] = (input) =>
-    Effect.gen(function* () {
-      const [callbackOrigin, returnOrigin] = yield* Effect.all([
-        parseOrigin(input.callbackOrigin),
-        parseOrigin(input.returnOrigin),
-      ]);
-      const stateBytes = yield* crypto
-        .randomBytes(32)
-        .pipe(Effect.mapError(() => new GitHubAppManifestError({ reason: "invalid-state" })));
-      const state = Buffer.from(stateBytes).toString("base64url");
-      const now = clock.currentTimeMillisUnsafe();
-      yield* Ref.update(flows, (current) => {
-        const next = new Map(
-          [...current].filter(([, value]) => value.expiresAt > now).slice(-MAX_PENDING_FLOWS + 1),
-        );
-        next.set(state, {
-          returnUrl: new URL(SETTINGS_PATH, returnOrigin).toString(),
-          expiresAt: now + FLOW_TTL_MS,
+  const start: GitHubAppManifest["Service"]["start"] = Effect.fn("GitHubAppManifest.start")(
+    (input) =>
+      Effect.gen(function* () {
+        const [callbackOrigin, returnOrigin] = yield* Effect.all([
+          parseOrigin(input.callbackOrigin),
+          parseOrigin(input.returnOrigin),
+        ]);
+        const stateBytes = yield* crypto
+          .randomBytes(32)
+          .pipe(Effect.mapError(() => new GitHubAppManifestError({ reason: "invalid-state" })));
+        const state = Buffer.from(stateBytes).toString("base64url");
+        const now = clock.currentTimeMillisUnsafe();
+        yield* Ref.update(flows, (current) => {
+          const next = new Map(
+            [...current].filter(([, value]) => value.expiresAt > now).slice(-MAX_PENDING_FLOWS + 1),
+          );
+          next.set(state, {
+            returnUrl: new URL(SETTINGS_PATH, returnOrigin).toString(),
+            expiresAt: now + FLOW_TTL_MS,
+          });
+          return next;
         });
-        return next;
-      });
 
-      const callbackUrl = new URL(CALLBACK_PATH, callbackOrigin).toString();
-      const manifest = encodeManifest({
-        name: "T3 Code Autopilot",
-        url: "https://github.com/OmegaHawkeye/t3code",
-        description: "Receives labeled GitHub issues for T3 Code Autopilot.",
-        hook_attributes: {
-          url: new URL("/api/autopilot/github/webhook", callbackOrigin).toString(),
-        },
-        redirect_url: callbackUrl,
-        setup_url: new URL(SETTINGS_PATH, returnOrigin).toString(),
-        default_permissions: { issues: "read" },
-        default_events: ["issues"],
-        public: false,
-      });
-      const actionUrl = new URL("https://github.com/settings/apps/new");
-      actionUrl.searchParams.set("state", state);
-      return { actionUrl: actionUrl.toString(), state, manifest };
-    });
+        const callbackUrl = new URL(CALLBACK_PATH, callbackOrigin).toString();
+        const manifest = encodeManifest({
+          name: "T3 Code Autopilot",
+          url: "https://github.com/OmegaHawkeye/t3code",
+          description: "Receives labeled GitHub issues for T3 Code Autopilot.",
+          hook_attributes: {
+            url: new URL("/api/autopilot/github/webhook", callbackOrigin).toString(),
+          },
+          redirect_url: callbackUrl,
+          setup_url: new URL(SETTINGS_PATH, returnOrigin).toString(),
+          default_permissions: { issues: "read" },
+          default_events: ["issues"],
+          public: false,
+        });
+        const actionUrl = new URL("https://github.com/settings/apps/new");
+        actionUrl.searchParams.set("state", state);
+        return { actionUrl: actionUrl.toString(), state, manifest };
+      }),
+  );
 
-  const callback: GitHubAppManifest["Service"]["callback"] = (input) =>
+  const callback: GitHubAppManifest["Service"]["callback"] = Effect.fn(
+    "GitHubAppManifest.callback",
+  )((input) =>
     Effect.gen(function* () {
       const now = clock.currentTimeMillisUnsafe();
       const flow = yield* Ref.modify(flows, (current) => {
@@ -184,7 +188,8 @@ const make = Effect.gen(function* () {
         }
       }
       return { returnUrl: flow.value.returnUrl, connected };
-    });
+    }),
+  );
 
   return GitHubAppManifest.of({ start, callback });
 });

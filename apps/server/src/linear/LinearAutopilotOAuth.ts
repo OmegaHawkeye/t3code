@@ -172,95 +172,101 @@ const make = Effect.gen(function* () {
       .set(CLIENT_ID_SECRET, new TextEncoder().encode(clientId))
       .pipe(Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })));
 
-  const exchangeCode = (input: { readonly code: string; readonly flow: PendingFlow }) =>
-    Effect.gen(function* () {
-      const response = yield* requestToken(
-        HttpClientRequest.post(TOKEN_URL).pipe(
-          HttpClientRequest.bodyUrlParams({
-            client_id: input.flow.clientId,
-            code: input.code,
-            code_verifier: input.flow.verifier,
-            grant_type: "authorization_code",
-            redirect_uri: input.flow.redirectUri,
-          }),
-        ),
-      );
-      yield* saveClientId(input.flow.clientId);
-      yield* saveToken(response);
-    });
-
-  const start: LinearAutopilotOAuth["Service"]["start"] = (input) =>
-    Effect.gen(function* () {
-      const { callbackOrigin, returnOrigin } = input;
-      const parseOrigin = (origin: string) =>
-        Effect.try({
-          try: () => {
-            const parsed = new URL(origin);
-            if (
-              !["http:", "https:"].includes(parsed.protocol) ||
-              parsed.origin === "null" ||
-              parsed.username ||
-              parsed.password ||
-              parsed.pathname !== "/" ||
-              parsed.search ||
-              parsed.hash
-            )
-              throw new Error("invalid origin");
-            return parsed.origin;
-          },
-          catch: () => new LinearAutopilotOAuthError({ reason: "invalid-origin" }),
-        });
-      const [parsedCallbackOrigin, parsedReturnOrigin] = yield* Effect.all(
-        [parseOrigin(callbackOrigin), parseOrigin(returnOrigin)],
-        { concurrency: 2 },
-      );
-      const clientId =
-        input.clientId === undefined ? (yield* readCredentials).clientId : input.clientId.trim();
-      if (!clientId || clientId.length > 512) {
-        return yield* new LinearAutopilotOAuthError({ reason: "credentials-incomplete" });
-      }
-      const [stateBytes, verifierBytes] = yield* Effect.all(
-        [crypto.randomBytes(32), crypto.randomBytes(32)],
-        { concurrency: 2 },
-      ).pipe(Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })));
-      const state = NodeBuffer.Buffer.from(stateBytes).toString("base64url");
-      const verifier = NodeBuffer.Buffer.from(verifierBytes).toString("base64url");
-      const challengeDigest = yield* crypto
-        .digest("SHA-256", new TextEncoder().encode(verifier))
-        .pipe(Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })));
-      const challenge = NodeBuffer.Buffer.from(challengeDigest).toString("base64url");
-      const redirectUri = new URL(CALLBACK_PATH, parsedCallbackOrigin).toString();
-      const returnUrl = new URL(RETURN_PATH, parsedReturnOrigin).toString();
-      const now = clock.currentTimeMillisUnsafe();
-      const flow: PendingFlow = {
-        clientId,
-        verifier,
-        redirectUri,
-        returnUrl,
-        expiresAt: now + FLOW_TTL_MS,
-      };
-      yield* Ref.update(pendingFlows, (flows) => {
-        const current = new Map(
-          [...flows].filter(([, value]) => value.expiresAt > now).slice(-MAX_PENDING_FLOWS + 1),
+  const exchangeCode = Effect.fn("LinearAutopilotOAuth.exchangeCode")(
+    (input: { readonly code: string; readonly flow: PendingFlow }) =>
+      Effect.gen(function* () {
+        const response = yield* requestToken(
+          HttpClientRequest.post(TOKEN_URL).pipe(
+            HttpClientRequest.bodyUrlParams({
+              client_id: input.flow.clientId,
+              code: input.code,
+              code_verifier: input.flow.verifier,
+              grant_type: "authorization_code",
+              redirect_uri: input.flow.redirectUri,
+            }),
+          ),
         );
-        current.set(state, flow);
-        return current;
-      });
-      const authorization = new URL(AUTHORIZE_URL);
-      authorization.search = new URLSearchParams({
-        actor: "app",
-        client_id: clientId,
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-        redirect_uri: redirectUri,
-        response_type: "code",
-        scope: OAUTH_SCOPE,
-        state,
-      }).toString();
-      return { authorizationUrl: authorization.toString(), redirectUri };
-    });
+        yield* saveClientId(input.flow.clientId);
+        yield* saveToken(response);
+      }),
+  );
 
-  const callback: LinearAutopilotOAuth["Service"]["callback"] = (input) =>
+  const start: LinearAutopilotOAuth["Service"]["start"] = Effect.fn("LinearAutopilotOAuth.start")(
+    (input) =>
+      Effect.gen(function* () {
+        const { callbackOrigin, returnOrigin } = input;
+        const parseOrigin = (origin: string) =>
+          Effect.try({
+            try: () => {
+              const parsed = new URL(origin);
+              if (
+                !["http:", "https:"].includes(parsed.protocol) ||
+                parsed.origin === "null" ||
+                parsed.username ||
+                parsed.password ||
+                parsed.pathname !== "/" ||
+                parsed.search ||
+                parsed.hash
+              )
+                throw new Error("invalid origin");
+              return parsed.origin;
+            },
+            catch: () => new LinearAutopilotOAuthError({ reason: "invalid-origin" }),
+          });
+        const [parsedCallbackOrigin, parsedReturnOrigin] = yield* Effect.all(
+          [parseOrigin(callbackOrigin), parseOrigin(returnOrigin)],
+          { concurrency: 2 },
+        );
+        const clientId =
+          input.clientId === undefined ? (yield* readCredentials).clientId : input.clientId.trim();
+        if (!clientId || clientId.length > 512) {
+          return yield* new LinearAutopilotOAuthError({ reason: "credentials-incomplete" });
+        }
+        const [stateBytes, verifierBytes] = yield* Effect.all(
+          [crypto.randomBytes(32), crypto.randomBytes(32)],
+          { concurrency: 2 },
+        ).pipe(Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })));
+        const state = NodeBuffer.Buffer.from(stateBytes).toString("base64url");
+        const verifier = NodeBuffer.Buffer.from(verifierBytes).toString("base64url");
+        const challengeDigest = yield* crypto
+          .digest("SHA-256", new TextEncoder().encode(verifier))
+          .pipe(Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })));
+        const challenge = NodeBuffer.Buffer.from(challengeDigest).toString("base64url");
+        const redirectUri = new URL(CALLBACK_PATH, parsedCallbackOrigin).toString();
+        const returnUrl = new URL(RETURN_PATH, parsedReturnOrigin).toString();
+        const now = clock.currentTimeMillisUnsafe();
+        const flow: PendingFlow = {
+          clientId,
+          verifier,
+          redirectUri,
+          returnUrl,
+          expiresAt: now + FLOW_TTL_MS,
+        };
+        yield* Ref.update(pendingFlows, (flows) => {
+          const current = new Map(
+            [...flows].filter(([, value]) => value.expiresAt > now).slice(-MAX_PENDING_FLOWS + 1),
+          );
+          current.set(state, flow);
+          return current;
+        });
+        const authorization = new URL(AUTHORIZE_URL);
+        authorization.search = new URLSearchParams({
+          actor: "app",
+          client_id: clientId,
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+          redirect_uri: redirectUri,
+          response_type: "code",
+          scope: OAUTH_SCOPE,
+          state,
+        }).toString();
+        return { authorizationUrl: authorization.toString(), redirectUri };
+      }),
+  );
+
+  const callback: LinearAutopilotOAuth["Service"]["callback"] = Effect.fn(
+    "LinearAutopilotOAuth.callback",
+  )((input) =>
     Effect.gen(function* () {
       const now = clock.currentTimeMillisUnsafe();
       const flow = yield* Ref.modify(pendingFlows, (flows) => {
@@ -284,9 +290,10 @@ const make = Effect.gen(function* () {
         returnUrl: flow.value.returnUrl,
         result: result ? ("connected" as const) : ("failed" as const),
       };
-    });
+    }),
+  );
 
-  const refreshToken = (stored: StoredToken) =>
+  const refreshToken = Effect.fn("LinearAutopilotOAuth.refreshToken")((stored: StoredToken) =>
     Effect.gen(function* () {
       const credentials = yield* readCredentials;
       const response = yield* requestToken(
@@ -300,7 +307,8 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "refresh" })));
       yield* saveToken(response);
       return response.access_token;
-    });
+    }),
+  );
 
   const accessToken: LinearAutopilotOAuth["Service"]["accessToken"] = (options) =>
     refreshLock.withPermits(1)(

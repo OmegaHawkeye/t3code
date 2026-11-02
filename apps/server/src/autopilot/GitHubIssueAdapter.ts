@@ -21,6 +21,7 @@ const GitHubIssuesWebhook = Schema.Struct({
     pull_request: Schema.optional(Schema.Unknown),
   }),
 });
+const decodeGitHubIssuesWebhook = Schema.decodeUnknownOption(GitHubIssuesWebhook);
 
 export interface GitHubIssueIntakeConfig {
   readonly mode: "disabled" | "shadow" | "queue";
@@ -33,7 +34,7 @@ export function mapGitHubIssueWebhookToTicket(
   config: GitHubIssueIntakeConfig,
 ): AutopilotTicket | null {
   if (config.mode === "disabled" || config.githubIssueTriggerLabel.length === 0) return null;
-  const event = Option.getOrNull(Schema.decodeUnknownOption(GitHubIssuesWebhook)(payload));
+  const event = Option.getOrNull(decodeGitHubIssuesWebhook(payload));
   if (event === null || event.issue.pull_request !== undefined) return null;
   const repository = event.repository.full_name.toLowerCase();
   if (!Object.hasOwn(config.githubIssueProjectMappings, repository)) return null;

@@ -9,7 +9,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Crypto from "effect/Crypto";
 import * as Hex from "effect/encoding/Hex";
 

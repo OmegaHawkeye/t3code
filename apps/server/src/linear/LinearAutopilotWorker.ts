@@ -67,7 +67,7 @@ const make = Effect.gen(function* () {
   // A failed Linear poll must not hold up runs from other sources.
   const runOnce = pollIntake.pipe(
     Effect.catchCause(() => Effect.logWarning("Linear autopilot intake poll failed")),
-    Effect.flatMap(() => advanceRuns),
+    Effect.andThen(advanceRuns),
     Effect.catchCause(() => Effect.logWarning("Linear autopilot worker tick failed")),
     Effect.asVoid,
   );

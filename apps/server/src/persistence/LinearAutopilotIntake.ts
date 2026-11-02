@@ -33,6 +33,7 @@ export const LinearAutopilotCandidate = Schema.Struct({
   observedAt: Schema.DateTimeUtcFromString,
 });
 export type LinearAutopilotCandidate = typeof LinearAutopilotCandidate.Type;
+const decodeLinearAutopilotCandidate = Schema.decodeUnknownEffect(LinearAutopilotCandidate);
 
 const SnapshotHashInput = Schema.Struct({
   source: AutopilotTicketSource,
@@ -49,6 +50,8 @@ const OutboxIdCodec = Schema.fromJsonString(
     Schema.Tuple([AutopilotTicketSource, Schema.String, Schema.String, Schema.String]),
   ),
 );
+const encodeSnapshotHash = Schema.encodeEffect(SnapshotHashCodec);
+const encodeOutboxId = Schema.encodeEffect(OutboxIdCodec);
 
 const snapshotHash = (
   crypto: Crypto.Crypto,
@@ -62,7 +65,7 @@ const snapshotHash = (
     readonly sourceUpdatedAt: DateTime.Utc | string;
   },
 ): Effect.Effect<string> =>
-  Schema.encodeEffect(SnapshotHashCodec)({
+  encodeSnapshotHash({
     source: candidate.source,
     identifier: candidate.identifier,
     title: candidate.title,
@@ -96,6 +99,7 @@ const AutopilotTicketIntakePayload = Schema.Struct({
   eventId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(255))),
   observedAt: Schema.DateTimeUtcFromString,
 });
+const decodeAutopilotTicketIntakePayload = Schema.decodeUnknownEffect(AutopilotTicketIntakePayload);
 const PendingOutboxRow = Schema.Struct({
   outboxId: Schema.String,
   source: AutopilotTicketSource,
@@ -313,8 +317,8 @@ const make = Effect.gen(function* () {
   });
 
   const repository = LinearAutopilotIntakeRepository.of({
-    ingestTicket: (payload) =>
-      Schema.decodeUnknownEffect(AutopilotTicketIntakePayload)(payload).pipe(
+    ingestTicket: Effect.fn("LinearAutopilotIntakeRepository.ingestTicket")((payload) =>
+      decodeAutopilotTicketIntakePayload(payload).pipe(
         Effect.mapError((cause) =>
           PersistenceDecodeError.fromSchemaError("LinearAutopilotIntake.ingestTicket", cause),
         ),
@@ -337,8 +341,9 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.flatMap((candidate) => repository.ingest(candidate))),
         ),
       ),
-    ingest: (payload) =>
-      Schema.decodeUnknownEffect(LinearAutopilotCandidate)(payload).pipe(
+    ),
+    ingest: Effect.fn("LinearAutopilotIntakeRepository.ingest")((payload) =>
+      decodeLinearAutopilotCandidate(payload).pipe(
         Effect.mapError((cause) =>
           PersistenceDecodeError.fromSchemaError("LinearAutopilotIntake.ingest", cause),
         ),
@@ -369,7 +374,7 @@ const make = Effect.gen(function* () {
                 );
                 if (revision.length === 0) return false;
 
-                const outboxIdPayload = yield* Schema.encodeEffect(OutboxIdCodec)([
+                const outboxIdPayload = yield* encodeOutboxId([
                   candidate.source,
                   candidate.workspaceId,
                   candidate.issueId,
@@ -411,23 +416,29 @@ const make = Effect.gen(function* () {
             ),
         ),
       ),
-    listPending: (limit) =>
+    ),
+    listPending: Effect.fn("LinearAutopilotIntakeRepository.listPending")((limit) =>
       listPendingRows({ limit }).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.listPending:query")),
       ),
-    getIssueContext: (input) =>
+    ),
+    getIssueContext: Effect.fn("LinearAutopilotIntakeRepository.getIssueContext")((input) =>
       selectIssueContext(input).pipe(
         Effect.map((row) => (row._tag === "Some" ? row.value : null)),
         Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.getIssueContext:query")),
       ),
-    markDispatched: (outboxId, dispatchedAt) =>
-      markDispatchedRow({ outboxId, dispatchedAt }).pipe(
-        Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.markDispatched:query")),
-      ),
-    requeue: (input) =>
+    ),
+    markDispatched: Effect.fn("LinearAutopilotIntakeRepository.markDispatched")(
+      (outboxId, dispatchedAt) =>
+        markDispatchedRow({ outboxId, dispatchedAt }).pipe(
+          Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.markDispatched:query")),
+        ),
+    ),
+    requeue: Effect.fn("LinearAutopilotIntakeRepository.requeue")((input) =>
       requeueRow(input).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotIntake.requeue:query")),
       ),
+    ),
   });
   return repository;
 });

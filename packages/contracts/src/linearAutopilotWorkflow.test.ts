@@ -1,5 +1,4 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -7,6 +6,10 @@ import {
   LinearAutopilotWorkflow,
   LinearAutopilotWorkflowExecution,
 } from "./linearAutopilotWorkflow.ts";
+
+const decodeExecution = Schema.decodeUnknownSync(LinearAutopilotWorkflowExecution);
+const decodeWorkflow = Schema.decodeSync(LinearAutopilotWorkflow);
+const decodeUnknownWorkflow = Schema.decodeUnknownSync(LinearAutopilotWorkflow);
 
 describe("LinearAutopilotWorkflow schemas", () => {
   it("round-trips a persisted graph and run cursor", () => {
@@ -16,33 +19,25 @@ describe("LinearAutopilotWorkflow schemas", () => {
       nodeId: "review",
       traversals: { "review:revise:plan": 1 },
     };
-    const decoded = Effect.runSync(
-      Schema.decodeUnknownEffect(LinearAutopilotWorkflowExecution)(execution),
-    );
+    const decoded = decodeExecution(execution);
     expect(decoded).toStrictEqual(execution);
-    expect(
-      Effect.runSync(Schema.decodeUnknownEffect(LinearAutopilotWorkflow)(decoded.definition)),
-    ).toStrictEqual(defaultLinearAutopilotWorkflow);
+    expect(decodeWorkflow(decoded.definition)).toStrictEqual(defaultLinearAutopilotWorkflow);
   });
 
   it("rejects an unsupported traversal count or an oversized graph", () => {
     expect(() =>
-      Effect.runSync(
-        Schema.decodeUnknownEffect(LinearAutopilotWorkflowExecution)({
-          definition: defaultLinearAutopilotWorkflow,
-          nodeId: "review",
-          traversals: { "review:revise:plan": -1 },
-        }),
-      ),
+      decodeExecution({
+        definition: defaultLinearAutopilotWorkflow,
+        nodeId: "review",
+        traversals: { "review:revise:plan": -1 },
+      }),
     ).toThrow();
 
     expect(() =>
-      Effect.runSync(
-        Schema.decodeUnknownEffect(LinearAutopilotWorkflow)({
-          ...defaultLinearAutopilotWorkflow,
-          nodes: Array.from({ length: 9 }, (_, index) => ({ id: `node-${index}`, kind: "plan" })),
-        }),
-      ),
+      decodeUnknownWorkflow({
+        ...defaultLinearAutopilotWorkflow,
+        nodes: Array.from({ length: 9 }, (_, index) => ({ id: `node-${index}`, kind: "plan" })),
+      }),
     ).toThrow();
   });
 });

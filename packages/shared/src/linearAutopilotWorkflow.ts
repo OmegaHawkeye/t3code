@@ -48,7 +48,7 @@ export interface LinearAutopilotWorkflowIssue {
 const nodeById = (workflow: LinearAutopilotWorkflow, id: string) =>
   workflow.nodes.find((node) => node.id === id);
 
-export const linearAutopilotReachableFrom = (
+const linearAutopilotReachableFrom = (
   workflow: LinearAutopilotWorkflow,
   start: string,
   excluded: ReadonlySet<string> = new Set(),

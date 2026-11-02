@@ -492,23 +492,20 @@ const make = Effect.gen(function* () {
     `,
   });
 
-  const runIdFor = (
-    source: AutopilotTicketSource,
-    workspaceId: string,
-    issueId: string,
-    generation: number,
-  ) =>
-    Effect.gen(function* () {
-      const payload = yield* encodeRunId([source, workspaceId, issueId, generation]).pipe(
-        Effect.orDie,
-      );
-      return Hex.encode(
-        yield* crypto.digest("SHA-256", new TextEncoder().encode(payload)).pipe(Effect.orDie),
-      );
-    });
+  const runIdFor = Effect.fn("LinearAutopilotRuns.runIdFor")(
+    (source: AutopilotTicketSource, workspaceId: string, issueId: string, generation: number) =>
+      Effect.gen(function* () {
+        const payload = yield* encodeRunId([source, workspaceId, issueId, generation]).pipe(
+          Effect.orDie,
+        );
+        return Hex.encode(
+          yield* crypto.digest("SHA-256", new TextEncoder().encode(payload)).pipe(Effect.orDie),
+        );
+      }),
+  );
 
   return LinearAutopilotRunRepository.of({
-    createOrGetActive: (input) =>
+    createOrGetActive: Effect.fn("LinearAutopilotRunRepository.createOrGetActive")((input) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -543,7 +540,8 @@ const make = Effect.gen(function* () {
               ),
           }),
         ),
-    createNextGeneration: (input) =>
+    ),
+    createNextGeneration: Effect.fn("LinearAutopilotRunRepository.createNextGeneration")((input) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -573,20 +571,24 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.createNextGeneration:query")),
         ),
-    getById: (runId) =>
+    ),
+    getById: Effect.fn("LinearAutopilotRunRepository.getById")((runId) =>
       findById({ runId }).pipe(
         Effect.map((row) => (Option.isSome(row) ? row.value : null)),
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.getById:query")),
       ),
-    listRecoverable: (limit) =>
+    ),
+    listRecoverable: Effect.fn("LinearAutopilotRunRepository.listRecoverable")((limit) =>
       listRecoverableRows({ limit }).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.listRecoverable:query")),
       ),
-    listRecentForProject: (input) =>
+    ),
+    listRecentForProject: Effect.fn("LinearAutopilotRunRepository.listRecentForProject")((input) =>
       listRecentForProjectRows(input).pipe(
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.listRecentForProject:query")),
       ),
-    transition: (input) =>
+    ),
+    transition: Effect.fn("LinearAutopilotRunRepository.transition")((input) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -621,16 +623,19 @@ const make = Effect.gen(function* () {
               ),
           }),
         ),
-    approve: (input) =>
+    ),
+    approve: Effect.fn("LinearAutopilotRunRepository.approve")((input) =>
       approveRun(input).pipe(
         Effect.map((rows) => rows.length > 0),
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.approve:query")),
       ),
-    checkpointWorkflow: (input) =>
+    ),
+    checkpointWorkflow: Effect.fn("LinearAutopilotRunRepository.checkpointWorkflow")((input) =>
       updateWorkflowCheckpoint(input).pipe(
         Effect.map((rows) => rows.length > 0),
         Effect.mapError(toPersistenceSqlError("LinearAutopilotRuns.checkpointWorkflow:query")),
       ),
+    ),
   });
 });
 
