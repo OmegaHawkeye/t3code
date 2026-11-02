@@ -13,6 +13,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  autopilotSourceMode,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
@@ -52,6 +53,7 @@ describe("Linear autopilot settings", () => {
       reviewStateId: "",
       triggerLabelIds: [],
       projectMappings: {},
+      workflows: {},
       clientId: "",
       clientSecret: "",
       githubIssueTriggerLabel: "",
@@ -78,6 +80,7 @@ describe("Linear autopilot settings", () => {
       reviewStateId: "state-review",
       triggerLabelIds: ["label-autopilot"],
       projectMappings: { "linear-project": ProjectId.make("trusted-project-1") },
+      workflows: {},
       clientId: "client-id",
       clientSecret: "client-secret",
       githubIssueTriggerLabel: "",
@@ -98,6 +101,26 @@ describe("Linear autopilot settings", () => {
     expect(
       decodeServerSettingsPatch({ linearAutopilot: { mode: "queue" } }).linearAutopilot?.mode,
     ).toBe("queue");
+  });
+});
+
+describe("autopilot per-source intake mode", () => {
+  it("lets GitHub and Slack inherit the shared mode until they have their own", () => {
+    const legacy = decodeServerSettings({ linearAutopilot: { mode: "queue" } }).linearAutopilot;
+    expect(autopilotSourceMode(legacy, "github")).toBe("queue");
+    expect(autopilotSourceMode(legacy, "slack")).toBe("queue");
+  });
+
+  it("uses each source's own mode independently of Linear", () => {
+    const settings = decodeServerSettings({
+      linearAutopilot: { mode: "queue", githubIssueMode: "disabled", slackMode: "shadow" },
+    }).linearAutopilot;
+    expect(autopilotSourceMode(settings, "linear")).toBe("queue");
+    expect(autopilotSourceMode(settings, "github")).toBe("disabled");
+    expect(autopilotSourceMode(settings, "slack")).toBe("shadow");
+    expect(() =>
+      decodeServerSettingsPatch({ linearAutopilot: { slackMode: "dispatch" } }),
+    ).toThrow();
   });
 });
 

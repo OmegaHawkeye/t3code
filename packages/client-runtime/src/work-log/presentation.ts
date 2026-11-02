@@ -635,6 +635,8 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "attachment-prepare":
     case "attachment-discard":
     case "attachment-send":
+    case "autopilot-run-cancel":
+    case "autopilot-run-restart":
       return 0;
     case "other":
     case "update":

@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  defaultLinearAutopilotWorkflow,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -960,6 +961,32 @@ describe("serverSettings helpers", () => {
     });
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
+  });
+});
+
+describe("linear autopilot maps", () => {
+  it("removes map entries the patch leaves out", () => {
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      linearAutopilot: {
+        ...DEFAULT_SERVER_SETTINGS.linearAutopilot,
+        projectMappings: { "linear-project": projectId },
+        githubIssueProjectMappings: { "acme/app": projectId },
+        workflows: { [projectId]: { ...defaultLinearAutopilotWorkflow, id: "custom" } },
+      },
+    };
+    const patched = applyServerSettingsPatch(current, {
+      linearAutopilot: {
+        ...current.linearAutopilot,
+        projectMappings: {},
+        githubIssueProjectMappings: {},
+        workflows: {},
+      },
+    });
+    expect(patched.linearAutopilot.projectMappings).toEqual({});
+    expect(patched.linearAutopilot.githubIssueProjectMappings).toEqual({});
+    expect(patched.linearAutopilot.workflows).toEqual({});
   });
 });
 

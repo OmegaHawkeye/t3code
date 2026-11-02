@@ -181,6 +181,40 @@ export const layer = HttpApiBuilder.group(
             .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
           return { approved };
         }),
+      )
+      .handle(
+        "listRuns",
+        Effect.fn("environment.linearAutopilot.listRuns")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* operator
+            .listRuns(args.query.projectId, 20)
+            .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
+        }),
+      )
+      .handle(
+        "cancelRun",
+        Effect.fn("environment.linearAutopilot.cancelRun")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const principal = yield* EnvironmentAuthenticatedPrincipal;
+          const cancelled = yield* operator
+            .cancelRun({ ...args.payload, cancelledBy: principal.subject })
+            .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
+          return { cancelled };
+        }),
+      )
+      .handle(
+        "restartRun",
+        Effect.fn("environment.linearAutopilot.restartRun")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const principal = yield* EnvironmentAuthenticatedPrincipal;
+          const runId = yield* operator
+            .restartRun({ ...args.payload, requestedBy: principal.subject })
+            .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
+          return { runId };
+        }),
       );
   }),
 );

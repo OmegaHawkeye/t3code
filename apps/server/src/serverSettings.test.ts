@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  defaultLinearAutopilotWorkflow,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -484,6 +485,35 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             { id: "fastMode", value: false },
           ],
         ),
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("rejects an unexecutable autopilot workflow and keeps the saved settings", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const projectId = ProjectId.make("project-workflow");
+      const current = (yield* serverSettings.getSettings).linearAutopilot;
+      const valid = { ...defaultLinearAutopilotWorkflow, id: "default-copy" };
+      // Custom workflows need explicit personas; the built-in id is the only exemption.
+      const saved = yield* serverSettings.updateSettings({
+        linearAutopilot: {
+          ...current,
+          workflows: { [projectId]: defaultLinearAutopilotWorkflow },
+        },
+      });
+      assert.deepEqual(saved.linearAutopilot.workflows[projectId], defaultLinearAutopilotWorkflow);
+
+      const rejected = yield* serverSettings
+        .updateSettings({
+          linearAutopilot: { ...saved.linearAutopilot, workflows: { [projectId]: valid } },
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected.operation, "validate-autopilot-workflow");
+      assert.match(rejected.message, /explicit persona runtime profile/u);
+      assert.deepEqual(
+        (yield* serverSettings.getSettings).linearAutopilot.workflows[projectId],
+        defaultLinearAutopilotWorkflow,
       );
     }).pipe(Effect.provide(layerServerSettings())),
   );

@@ -35,6 +35,7 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as SettingsLinearAutopilotWorkflowsRouteImport } from './routes/settings.linear-autopilot.workflows'
 import { Route as SettingsLinearAutopilotSlackRouteImport } from './routes/settings.linear-autopilot.slack'
 import { Route as SettingsLinearAutopilotLinearRouteImport } from './routes/settings.linear-autopilot.linear'
 import { Route as SettingsLinearAutopilotGithubRouteImport } from './routes/settings.linear-autopilot.github'
@@ -172,6 +173,12 @@ const ChatNewRoute = ChatNewRouteImport.update({
   path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
+const SettingsLinearAutopilotWorkflowsRoute =
+  SettingsLinearAutopilotWorkflowsRouteImport.update({
+    id: '/workflows',
+    path: '/workflows',
+    getParentRoute: () => SettingsLinearAutopilotRoute,
+  } as any)
 const SettingsLinearAutopilotSlackRoute =
   SettingsLinearAutopilotSlackRouteImport.update({
     id: '/slack',
@@ -240,6 +247,7 @@ export interface FileRoutesByFullPath {
   '/settings/linear-autopilot/github': typeof SettingsLinearAutopilotGithubRoute
   '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
   '/settings/linear-autopilot/slack': typeof SettingsLinearAutopilotSlackRoute
+  '/settings/linear-autopilot/workflows': typeof SettingsLinearAutopilotWorkflowsRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -273,6 +281,7 @@ export interface FileRoutesByTo {
   '/settings/linear-autopilot/github': typeof SettingsLinearAutopilotGithubRoute
   '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
   '/settings/linear-autopilot/slack': typeof SettingsLinearAutopilotSlackRoute
+  '/settings/linear-autopilot/workflows': typeof SettingsLinearAutopilotWorkflowsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -308,6 +317,7 @@ export interface FileRoutesById {
   '/settings/linear-autopilot/github': typeof SettingsLinearAutopilotGithubRoute
   '/settings/linear-autopilot/linear': typeof SettingsLinearAutopilotLinearRoute
   '/settings/linear-autopilot/slack': typeof SettingsLinearAutopilotSlackRoute
+  '/settings/linear-autopilot/workflows': typeof SettingsLinearAutopilotWorkflowsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -343,6 +353,7 @@ export interface FileRouteTypes {
     | '/settings/linear-autopilot/github'
     | '/settings/linear-autopilot/linear'
     | '/settings/linear-autopilot/slack'
+    | '/settings/linear-autopilot/workflows'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -376,6 +387,7 @@ export interface FileRouteTypes {
     | '/settings/linear-autopilot/github'
     | '/settings/linear-autopilot/linear'
     | '/settings/linear-autopilot/slack'
+    | '/settings/linear-autopilot/workflows'
   id:
     | '__root__'
     | '/_chat'
@@ -410,6 +422,7 @@ export interface FileRouteTypes {
     | '/settings/linear-autopilot/github'
     | '/settings/linear-autopilot/linear'
     | '/settings/linear-autopilot/slack'
+    | '/settings/linear-autopilot/workflows'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -607,6 +620,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/settings/linear-autopilot/workflows': {
+      id: '/settings/linear-autopilot/workflows'
+      path: '/workflows'
+      fullPath: '/settings/linear-autopilot/workflows'
+      preLoaderRoute: typeof SettingsLinearAutopilotWorkflowsRouteImport
+      parentRoute: typeof SettingsLinearAutopilotRoute
+    }
     '/settings/linear-autopilot/slack': {
       id: '/settings/linear-autopilot/slack'
       path: '/slack'
@@ -675,6 +695,7 @@ interface SettingsLinearAutopilotRouteChildren {
   SettingsLinearAutopilotGithubRoute: typeof SettingsLinearAutopilotGithubRoute
   SettingsLinearAutopilotLinearRoute: typeof SettingsLinearAutopilotLinearRoute
   SettingsLinearAutopilotSlackRoute: typeof SettingsLinearAutopilotSlackRoute
+  SettingsLinearAutopilotWorkflowsRoute: typeof SettingsLinearAutopilotWorkflowsRoute
 }
 
 const SettingsLinearAutopilotRouteChildren: SettingsLinearAutopilotRouteChildren =
@@ -684,6 +705,8 @@ const SettingsLinearAutopilotRouteChildren: SettingsLinearAutopilotRouteChildren
     SettingsLinearAutopilotGithubRoute: SettingsLinearAutopilotGithubRoute,
     SettingsLinearAutopilotLinearRoute: SettingsLinearAutopilotLinearRoute,
     SettingsLinearAutopilotSlackRoute: SettingsLinearAutopilotSlackRoute,
+    SettingsLinearAutopilotWorkflowsRoute:
+      SettingsLinearAutopilotWorkflowsRoute,
   }
 
 const SettingsLinearAutopilotRouteWithChildren =

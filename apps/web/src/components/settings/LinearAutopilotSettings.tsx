@@ -5,8 +5,9 @@ import {
   type ProjectSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { ArrowLeftIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import * as Record from "effect/Record";
+import { ExternalLinkIcon } from "lucide-react";
+import { useEffect, useEffectEvent, useState } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -23,7 +24,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { Link } from "@tanstack/react-router";
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
 import { projectEnvironment } from "../../state/projects";
@@ -35,7 +35,14 @@ import {
   useScopedSettingsWriteAllowed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { cn } from "../../lib/utils";
+import {
+  AutopilotChipSelect,
+  AutopilotIntakeModePicker,
+  AutopilotSetupStep,
+  AutopilotSourcesLayout,
+} from "./AutopilotSetup";
+import { defaultLinearStatusId, INTAKE_MODE_LABEL } from "./AutopilotSetup.logic";
 
 const REDACTED_SECRET = "••••••";
 const linearOAuthAppConfigurationUrl = (redirectUri: string) => {
@@ -170,6 +177,26 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const clientIdConfigured = savedClientIdConfigured || serverClientIdConfigured;
   const [loadingCatalog, setLoadingCatalog] = useState(savedClientIdConfigured);
 
+  const applyCatalogResult = useEffectEvent(
+    (result: Awaited<ReturnType<typeof fetchAutopilotCatalog>>) => {
+      setCatalog(result.catalog);
+      setLinearConnected(result.connected);
+      setProjects(result.projects);
+      setCatalogError(result.error);
+      setRedirectUri(result.redirectUri ?? null);
+      setServerClientIdConfigured(result.clientIdConfigured ?? false);
+      setLoadingCatalog(false);
+      setOauthStatusLoaded(true);
+      const states = result.catalog?.teams.find((team) => team.id === teamId)?.states;
+      if (!states) return;
+      const fill = (current: string, name: string) =>
+        current || defaultLinearStatusId(states, name);
+      setNeedsHumanApprovalStateId((current) => fill(current, "Needs Human Approval"));
+      setBlockedStateId((current) => fill(current, "Blocked"));
+      setReviewStateId((current) => fill(current, "In Review"));
+    },
+  );
+
   const reloadCatalog = (selectedTeamId = teamId) => {
     setCatalog(null);
     setProjects([]);
@@ -177,14 +204,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     setLoadingCatalog(true);
     setOauthStatusLoaded(false);
     void fetchAutopilotCatalog(selectedTeamId || undefined).then((result) => {
-      setCatalog(result.catalog);
-      setLinearConnected(result.connected);
-      setProjects(result.projects);
-      setCatalogError(result.error);
-      setRedirectUri(result.redirectUri ?? null);
-      setServerClientIdConfigured(result.clientIdConfigured ?? false);
-      setLoadingCatalog(false);
-      setOauthStatusLoaded(true);
+      applyCatalogResult(result);
     });
   };
 
@@ -192,14 +212,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     let cancelled = false;
     void fetchAutopilotCatalog(teamId || undefined).then((result) => {
       if (cancelled) return;
-      setCatalog(result.catalog);
-      setLinearConnected(result.connected);
-      setProjects(result.projects);
-      setCatalogError(result.error);
-      setRedirectUri(result.redirectUri ?? null);
-      setServerClientIdConfigured(result.clientIdConfigured ?? false);
-      setLoadingCatalog(false);
-      setOauthStatusLoaded(true);
+      applyCatalogResult(result);
     });
     return () => {
       cancelled = true;
@@ -265,7 +278,6 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const selectedTeam = catalog?.teams.find((team) => team.id === teamId);
   const connected = linearConnected;
   const knownStateIds = new Set(selectedTeam?.states.map((state) => state.id) ?? []);
-  const knownLabelIds = new Set(selectedTeam?.labels.map((label) => label.id) ?? []);
   const mappingProjectIds = [
     ...new Set([
       ...(selectedTeam?.projects.map((project) => project.id) ?? []),
@@ -341,48 +353,134 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
     setCreatingProject(false);
   };
 
+  const issuesChosen = teamId.length > 0 && readyStateIds.length > 0;
+  const projectsMapped = Object.keys(projectMappings).length > 0;
+  const teamStates = selectedTeam?.states ?? [];
+  const stateName = (id: string) => teamStates.find((state) => state.id === id)?.name ?? id;
+  const statusRoles = [
+    {
+      label: "Needs approval",
+      description: "While an operator decision is required.",
+      value: needsHumanApprovalStateId,
+      set: setNeedsHumanApprovalStateId,
+    },
+    {
+      label: "Blocked",
+      description: "While work waits on an external dependency.",
+      value: blockedStateId,
+      set: setBlockedStateId,
+    },
+    {
+      label: "PR open",
+      description: "After verified work is delivered in a pull request.",
+      value: reviewStateId,
+      set: setReviewStateId,
+    },
+  ];
+
   return (
-    <SettingsPageContainer className="gap-6">
-      <SettingsSection
-        title="Autopilot integrations"
-        icon={
-          <Button
-            render={<Link to="/settings/linear-autopilot" />}
-            variant="ghost-muted"
-            size="icon-sm"
-            aria-label="Back to Autopilot"
-            title="Back to Autopilot"
-            className="-ml-1.5"
-          >
-            <ArrowLeftIcon aria-hidden />
-          </Button>
-        }
-      >
-        <SettingsRow
-          title="Linear OAuth app Client ID"
-          description={
-            settings.clientId === REDACTED_SECRET
-              ? "OAuth app identifier stored on this server. Leave blank to keep it."
-              : "Enter the Client ID from your Linear OAuth app. It is saved automatically after authorization."
-          }
-          control={
-            <div className="flex w-full flex-col gap-2 @min-[32rem]/settings-row:w-72">
-              <div className="flex w-full items-center gap-2">
-                <Input
-                  type="text"
-                  autoComplete="off"
-                  value={clientId}
-                  placeholder={settings.clientId === REDACTED_SECRET ? "Configured" : "Client ID"}
-                  disabled={!writeAllowed}
-                  onChange={(event) => {
-                    setClientId(event.target.value);
-                    setClearClientId(false);
-                  }}
-                />
+    <AutopilotSourcesLayout
+      source="linear"
+      notices={
+        <>
+          {!writeAllowed ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              This environment needs settings write permission to change Linear intake.
+            </p>
+          ) : null}
+          {oauthNotice ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              {oauthNotice}
+            </p>
+          ) : null}
+          {catalogError ? (
+            <div className="text-sm text-destructive" role="alert">
+              {catalogError}{" "}
+              <button
+                type="button"
+                className="underline underline-offset-4"
+                onClick={() => void reloadCatalog()}
+              >
+                Retry
+              </button>
+            </div>
+          ) : loadingCatalog ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              Connecting to Linear…
+            </p>
+          ) : null}
+        </>
+      }
+    >
+      <AutopilotSetupStep step={1} title="Connect Linear" done={connected} summary="Connected">
+        {connected ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {catalogError?.includes("workspace options") ? (
+              <Button
+                variant="outline"
+                disabled={!writeAllowed || oauthBusy}
+                onClick={() => void connectLinear()}
+              >
+                Reconnect Linear
+              </Button>
+            ) : null}
+            <Button
+              variant="destructive-outline"
+              disabled={!writeAllowed || oauthBusy}
+              onClick={() => void disconnectLinear()}
+            >
+              {oauthBusy ? "Working…" : "Disconnect Linear"}
+            </Button>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Create a private Linear OAuth app with this callback URL, then paste its Client ID. No
+              client secret is needed.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                aria-label="Linear OAuth callback URL"
+                className="min-w-64 flex-1"
+                readOnly
+                value={redirectUri ?? ""}
+                placeholder={
+                  oauthStatusLoaded ? "Callback URL unavailable" : "Loading callback URL…"
+                }
+              />
+              <Button
+                variant="outline"
+                disabled={!redirectUri}
+                render={
+                  redirectUri ? (
+                    <a
+                      href={linearOAuthAppConfigurationUrl(redirectUri)}
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  ) : undefined
+                }
+              >
+                Create Linear app <ExternalLinkIcon aria-hidden />
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                aria-label="Linear OAuth app Client ID"
+                className="min-w-64 flex-1"
+                autoComplete="off"
+                value={clientId}
+                placeholder={clientIdConfigured && !clearClientId ? "Client ID saved" : "Client ID"}
+                disabled={!writeAllowed}
+                onChange={(event) => {
+                  setClientId(event.target.value);
+                  setClearClientId(false);
+                }}
+              />
+              {clientIdConfigured && !clearClientId ? (
                 <Button
-                  type="button"
-                  variant="outline"
-                  disabled={!writeAllowed || !clientIdConfigured}
+                  variant="ghost"
+                  disabled={!writeAllowed}
                   onClick={() => {
                     setClearClientId(true);
                     setClientId("");
@@ -390,337 +488,139 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                 >
                   Clear
                 </Button>
-              </div>
-              <a
-                className={`text-sm text-primary underline underline-offset-4 ${
-                  redirectUri ? "" : "pointer-events-none opacity-50"
-                }`}
-                href={redirectUri ? linearOAuthAppConfigurationUrl(redirectUri) : undefined}
-                aria-disabled={!redirectUri}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {redirectUri
-                  ? "Open prefilled Linear OAuth app setup"
-                  : oauthStatusLoaded
-                    ? "Callback URL unavailable; retry connection status"
-                    : "Loading callback URL…"}
-              </a>
-            </div>
-          }
-        />
-        <SettingsRow
-          title="Linear workspace connection"
-          description={
-            connected
-              ? "Linear is connected for this server."
-              : !writeAllowed
-                ? "This environment needs settings write permission before it can connect Linear."
-                : "Save the OAuth app Client ID once, then authorize a Linear workspace. PKCE does not require a client secret."
-          }
-          control={
-            <div className="flex items-center gap-2">
-              {connected && catalogError?.includes("workspace options") ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={!writeAllowed || oauthBusy}
-                  onClick={() => void connectLinear()}
-                >
-                  Reconnect Linear
-                </Button>
               ) : null}
-              <Button
-                type="button"
-                variant={connected ? "outline" : "default"}
-                disabled={!writeAllowed || oauthBusy}
-                onClick={() => void (connected ? disconnectLinear() : connectLinear())}
-              >
-                {oauthBusy ? "Working…" : connected ? "Disconnect Linear" : "Sign in with Linear"}
+              <Button disabled={!writeAllowed || oauthBusy} onClick={() => void connectLinear()}>
+                {oauthBusy ? "Working…" : "Sign in with Linear"}
               </Button>
             </div>
-          }
-        />
-        <SettingsRow
-          title="OAuth callback URL"
-          description="Register this exact URL in the Linear OAuth application before signing in."
-          control={
-            <Input
-              aria-label="Linear OAuth callback URL"
-              readOnly
-              value={redirectUri ?? ""}
-              placeholder={oauthStatusLoaded ? "Callback URL unavailable" : "Loading callback URL…"}
-              className="w-full @min-[32rem]/settings-row:w-96"
-            />
-          }
-        />
-        {oauthNotice ? (
-          <p className="px-4 text-sm text-muted-foreground" role="status">
-            {oauthNotice}
-          </p>
-        ) : null}
-        {catalogError ? (
-          <div className="px-4 text-sm text-destructive" role="alert">
-            {catalogError}{" "}
-            <button
-              type="button"
-              className="underline underline-offset-4"
-              onClick={() => void reloadCatalog()}
-            >
-              Retry
-            </button>
-          </div>
-        ) : loadingCatalog ? (
-          <p className="px-4 text-sm text-muted-foreground" role="status">
-            Connecting to Linear…
-          </p>
-        ) : !connected && clientIdConfigured ? (
-          <p className="px-4 text-sm text-muted-foreground" role="status">
-            Sign in with Linear to load teams, statuses, labels, and projects.
-          </p>
-        ) : null}
-        <SettingsRow
-          title="Autopilot approvals"
-          description="Review saved plans and their independent reviews on the dedicated approvals page."
-          control={
-            <Button render={<Link to="/settings/linear-autopilot/approvals" />} variant="outline">
-              Open approvals
-            </Button>
-          }
-        />
-        <SettingsRow
-          title="Linear team"
-          description="Team whose issues the autopilot will evaluate."
-          control={
-            <select
-              aria-label="Linear team"
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm @min-[32rem]/settings-row:w-72"
-              value={teamId}
-              disabled={!writeAllowed || !connected}
-              onChange={(event) => {
-                const selectedTeamId = event.target.value;
-                setTeamId(selectedTeamId);
-                setReadyStateIds([]);
-                setTriggerLabelIds([]);
-                setNeedsHumanApprovalStateId("");
-                setBlockedStateId("");
-                setReviewStateId("");
-                setCatalogError(null);
-                setLoadingCatalog(Boolean(selectedTeamId));
-              }}
-            >
-              <option value="">Select a team…</option>
-              {teamId && !catalog?.teams.some((team) => team.id === teamId) ? (
-                <option value={teamId}>{teamId} (saved value)</option>
-              ) : null}
-              {catalog?.teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name} ({team.key})
-                </option>
-              ))}
-            </select>
-          }
-        />
-        <SettingsRow
-          title="Intake mode"
-          description="Disabled by default. Shadow evaluates only; Queue stores eligible issue snapshots without launching agents."
-          control={
-            <select
-              aria-label="Intake mode"
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-              value={mode}
-              disabled={!writeAllowed || !connected}
-              onChange={(event) => setMode(event.target.value as typeof mode)}
-            >
-              <option value="disabled">Disabled</option>
-              <option value="shadow">Shadow</option>
-              <option value="queue">Queue</option>
-            </select>
-          }
-        />
-        <SettingsRow
-          title="Needs Human Approval status"
-          description="Workflow status used when an operator decision is required."
-          control={
-            <select
-              aria-label="Needs Human Approval status"
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm @min-[32rem]/settings-row:w-72"
-              value={needsHumanApprovalStateId}
-              disabled={!writeAllowed || !connected || !selectedTeam}
-              onChange={(event) => setNeedsHumanApprovalStateId(event.target.value)}
-            >
-              <option value="">Select a status…</option>
-              {needsHumanApprovalStateId && !knownStateIds.has(needsHumanApprovalStateId) ? (
-                <option value={needsHumanApprovalStateId}>
-                  {needsHumanApprovalStateId} (saved value)
-                </option>
-              ) : null}
-              {selectedTeam?.states.map((state) => (
-                <option key={state.id} value={state.id}>
-                  {state.name} ({state.type})
-                </option>
-              ))}
-            </select>
-          }
-        />
-        <SettingsRow
-          title="Blocked status"
-          description="Workflow status used when work is blocked by an external dependency."
-          control={
-            <select
-              aria-label="Blocked status"
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm @min-[32rem]/settings-row:w-72"
-              value={blockedStateId}
-              disabled={!writeAllowed || !connected || !selectedTeam}
-              onChange={(event) => setBlockedStateId(event.target.value)}
-            >
-              <option value="">Select a status…</option>
-              {blockedStateId && !knownStateIds.has(blockedStateId) ? (
-                <option value={blockedStateId}>{blockedStateId} (saved value)</option>
-              ) : null}
-              {selectedTeam?.states.map((state) => (
-                <option key={state.id} value={state.id}>
-                  {state.name} ({state.type})
-                </option>
-              ))}
-            </select>
-          }
-        />
-        <SettingsRow
-          title="In Review status"
-          description="Workflow status after verified work is delivered in an open pull request."
-          control={
-            <select
-              aria-label="In Review status"
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm @min-[32rem]/settings-row:w-72"
-              value={reviewStateId}
-              disabled={!writeAllowed || !connected || !selectedTeam}
-              onChange={(event) => setReviewStateId(event.target.value)}
-            >
-              <option value="">Select a status…</option>
-              {reviewStateId && !knownStateIds.has(reviewStateId) ? (
-                <option value={reviewStateId}>{reviewStateId} (saved value)</option>
-              ) : null}
-              {selectedTeam?.states.map((state) => (
-                <option key={state.id} value={state.id}>
-                  {state.name} ({state.type})
-                </option>
-              ))}
-            </select>
-          }
-        />
-        <SettingsRow
-          title="Ready statuses"
-          description="Issues in any selected status qualify for intake."
-        >
-          <div className="grid gap-2 sm:grid-cols-2">
-            {readyStateIds
-              .filter((id) => !knownStateIds.has(id))
-              .map((id) => (
-                <label key={id} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked
-                    disabled={!writeAllowed || !connected || !selectedTeam}
-                    onChange={() =>
-                      setReadyStateIds((current) => current.filter((value) => value !== id))
-                    }
-                  />
-                  {id} (saved value)
-                </label>
-              ))}
-            {selectedTeam?.states.map((state) => (
-              <label key={state.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={readyStateIds.includes(state.id)}
-                  disabled={!writeAllowed || !connected || !selectedTeam}
-                  onChange={(event) =>
-                    setReadyStateIds((current) =>
-                      event.target.checked
-                        ? [...current, state.id]
-                        : current.filter((id) => id !== state.id),
-                    )
-                  }
-                />
-                {state.name} ({state.type})
-              </label>
-            ))}
-            {!selectedTeam ? (
-              <p className="text-sm text-muted-foreground">
-                Select a team to load workflow statuses.
-              </p>
+          </>
+        )}
+      </AutopilotSetupStep>
+
+      <AutopilotSetupStep
+        step={2}
+        title="Choose which issues to pick up"
+        done={issuesChosen}
+        locked={!connected}
+        summary={[
+          selectedTeam?.name ?? teamId,
+          readyStateIds.map(stateName).join(", "),
+          triggerLabelIds.length > 0
+            ? triggerLabelIds
+                .map((id) => selectedTeam?.labels.find((label) => label.id === id)?.name ?? id)
+                .join(", ")
+            : "any label",
+        ].join(" · ")}
+      >
+        <label className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="w-20 text-muted-foreground">Team</span>
+          <select
+            aria-label="Linear team"
+            className="h-9 w-72 max-w-full rounded-md border border-input bg-background px-2 text-sm"
+            value={teamId}
+            disabled={!writeAllowed}
+            onChange={(event) => {
+              const selectedTeamId = event.target.value;
+              setTeamId(selectedTeamId);
+              setReadyStateIds([]);
+              setTriggerLabelIds([]);
+              setNeedsHumanApprovalStateId("");
+              setBlockedStateId("");
+              setReviewStateId("");
+              setCatalogError(null);
+              setLoadingCatalog(Boolean(selectedTeamId));
+            }}
+          >
+            <option value="">Select a team…</option>
+            {teamId && !catalog?.teams.some((team) => team.id === teamId) ? (
+              <option value={teamId}>{teamId} (saved value)</option>
             ) : null}
-          </div>
-        </SettingsRow>
-        <SettingsRow
-          title="Trigger labels"
-          description="At least one selected label must be present on an issue."
-        >
-          <div className="grid gap-2 sm:grid-cols-2">
-            {triggerLabelIds
-              .filter((id) => !knownLabelIds.has(id))
-              .map((id) => (
-                <label key={id} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked
-                    disabled={!writeAllowed || !connected || !selectedTeam}
-                    onChange={() =>
-                      setTriggerLabelIds((current) => current.filter((value) => value !== id))
-                    }
-                  />
-                  {id} (saved value)
-                </label>
-              ))}
-            {selectedTeam?.labels.map((label) => (
-              <label key={label.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={triggerLabelIds.includes(label.id)}
-                  disabled={!writeAllowed || !connected || !selectedTeam}
-                  onChange={(event) =>
-                    setTriggerLabelIds((current) =>
-                      event.target.checked
-                        ? [...current, label.id]
-                        : current.filter((id) => id !== label.id),
-                    )
-                  }
-                />
-                {label.name}
-              </label>
+            {catalog?.teams.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.name} ({team.key})
+              </option>
             ))}
-            {selectedTeam && selectedTeam.labels.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No labels are available for this team.
-              </p>
-            ) : null}
-          </div>
-        </SettingsRow>
-        <SettingsRow
-          title="Project mappings"
-          description="Map each Linear project to a trusted local T3 project. Issue text never selects a repository."
-        >
-          <div className="mt-3 space-y-3">
-            {mappingProjectIds.map((linearProjectId) => {
-              const linearProject = selectedTeam?.projects.find(
-                (project) => project.id === linearProjectId,
-              );
-              const mappedProjectId = projectMappings[linearProjectId];
-              const mappedProject = projects.find((project) => project.id === mappedProjectId);
-              return (
-                <label
-                  key={linearProjectId}
-                  className="grid gap-2 text-sm @min-[32rem]/settings-row:grid-cols-[minmax(10rem,1fr)_minmax(12rem,1.5fr)] @min-[32rem]/settings-row:items-center"
-                >
-                  <span>{linearProject?.name ?? `${linearProjectId} (saved mapping)`}</span>
+          </select>
+        </label>
+        {selectedTeam ? (
+          <>
+            <div className="flex gap-3 text-sm">
+              <span className="w-20 shrink-0 pt-1 text-muted-foreground">Status</span>
+              <AutopilotChipSelect
+                label="Ready statuses"
+                options={selectedTeam.states.filter(
+                  (state) => state.type !== "completed" && state.type !== "canceled",
+                )}
+                selected={readyStateIds}
+                onChange={setReadyStateIds}
+                disabled={!writeAllowed}
+              />
+            </div>
+            <div className="flex gap-3 text-sm">
+              <span className="w-20 shrink-0 pt-1 text-muted-foreground">Label</span>
+              {selectedTeam.labels.length > 0 || triggerLabelIds.length > 0 ? (
+                <AutopilotChipSelect
+                  label="Trigger labels"
+                  options={selectedTeam.labels}
+                  selected={triggerLabelIds}
+                  onChange={setTriggerLabelIds}
+                  disabled={!writeAllowed}
+                />
+              ) : (
+                <span className="pt-1 text-muted-foreground">This team has no labels.</span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Issues in any selected status qualify. If you select labels, an issue needs at least
+              one of them.
+            </p>
+          </>
+        ) : null}
+      </AutopilotSetupStep>
+
+      <AutopilotSetupStep
+        step={3}
+        title="Map Linear projects to T3 projects"
+        done={projectsMapped}
+        locked={!connected || !selectedTeam}
+        summary={Object.entries(projectMappings)
+          .map(([linearProjectId, projectId]) => {
+            const source =
+              selectedTeam?.projects.find((project) => project.id === linearProjectId)?.name ??
+              linearProjectId;
+            const target = projects.find((project) => project.id === projectId)?.title ?? projectId;
+            return `${source} → ${target}`;
+          })
+          .join(" · ")}
+      >
+        <p className="text-sm text-muted-foreground">
+          Issues run in the T3 project their Linear project maps to. Unmapped projects are ignored;
+          issue text never selects a repository.
+        </p>
+        <div className="overflow-hidden rounded-lg border">
+          {mappingProjectIds.map((linearProjectId) => {
+            const linearProject = selectedTeam?.projects.find(
+              (project) => project.id === linearProjectId,
+            );
+            const mappedProjectId = projectMappings[linearProjectId];
+            const mappedProject = projects.find((project) => project.id === mappedProjectId);
+            return (
+              <label
+                key={linearProjectId}
+                className="grid items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.4fr)]"
+              >
+                <span className={cn("truncate", !mappedProjectId && "text-muted-foreground")}>
+                  {linearProject?.name ?? `${linearProjectId} (saved mapping)`}
+                </span>
+                <span aria-hidden className="hidden text-muted-foreground sm:block">
+                  →
+                </span>
+                <div className="flex min-w-0 items-center gap-1">
                   <select
                     aria-label={`T3 project for ${linearProject?.name ?? linearProjectId}`}
-                    className="h-9 min-w-0 rounded-md border border-input bg-background px-2"
+                    className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2"
                     value={mappedProjectId ?? ""}
-                    disabled={
-                      Boolean(mappedProjectId) || !writeAllowed || !connected || !selectedTeam
-                    }
+                    disabled={!writeAllowed}
                     onChange={(event) => {
                       const value = event.target.value;
                       if (value === "__create_t3_project__" && linearProject) {
@@ -730,60 +630,101 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                           linearProjectId,
                           linearProjectName: linearProject.name,
                         });
-                      } else if (value) {
-                        setProjectMappings((current) => ({
-                          ...current,
-                          [linearProjectId]: ProjectId.make(value),
-                        }));
+                        return;
                       }
+                      setProjectMappings((current) => {
+                        const rest = Record.remove(current, linearProjectId);
+                        return value ? { ...rest, [linearProjectId]: ProjectId.make(value) } : rest;
+                      });
                     }}
                   >
-                    {mappedProjectId ? (
-                      <option value={mappedProjectId}>
-                        {mappedProject?.title ?? mappedProjectId}
-                        {mappedProject
-                          ? ` — ${mappedProject.repositoryIdentity?.displayName ?? mappedProject.workspaceRoot}`
-                          : ""}
+                    <option value="">Ignore</option>
+                    {mappedProjectId && !mappedProject ? (
+                      <option value={mappedProjectId}>{mappedProjectId} (saved value)</option>
+                    ) : null}
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.title} —{" "}
+                        {project.repositoryIdentity?.displayName ??
+                          (project.repositoryIdentity?.name
+                            ? `${project.repositoryIdentity.owner ? `${project.repositoryIdentity.owner}/` : ""}${project.repositoryIdentity.name}`
+                            : project.workspaceRoot)}
                       </option>
-                    ) : (
-                      <>
-                        <option value="">Do not map</option>
-                        <option value="__create_t3_project__">Create a T3 project…</option>
-                      </>
-                    )}
-                    {projects.map((project) =>
-                      !mappedProjectId ? (
-                        <option key={project.id} value={project.id}>
-                          {project.title} —{" "}
-                          {project.repositoryIdentity?.displayName ??
-                            (project.repositoryIdentity?.name
-                              ? `${project.repositoryIdentity.owner ? `${project.repositoryIdentity.owner}/` : ""}${project.repositoryIdentity.name}`
-                              : project.workspaceRoot)}
-                        </option>
-                      ) : null,
-                    )}
+                    ))}
+                    {linearProject ? (
+                      <option value="__create_t3_project__">Create a T3 project…</option>
+                    ) : null}
                   </select>
-                </label>
-              );
-            })}
-            {mappingProjectIds.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No Linear projects are available for this team.
-              </p>
-            ) : null}
-          </div>
-        </SettingsRow>
-        {error ? (
-          <p role="alert" className="px-4 text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
-        <div className="flex justify-end px-4 py-4">
-          <Button disabled={!writeAllowed} onClick={save}>
-            Save Autopilot settings
-          </Button>
+                </div>
+              </label>
+            );
+          })}
+          {mappingProjectIds.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-muted-foreground">
+              This team has no Linear projects.
+            </p>
+          ) : null}
         </div>
-      </SettingsSection>
+        <details className="group text-sm">
+          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+            Status updates:{" "}
+            {statusRoles
+              .map((role) => `${role.label} → ${role.value ? stateName(role.value) : "unchanged"}`)
+              .join(" · ")}
+          </summary>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {statusRoles.map((role) => (
+              <label key={role.label} className="space-y-1">
+                <span className="block text-xs">{role.label}</span>
+                <select
+                  aria-label={`${role.label} status`}
+                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  value={role.value}
+                  disabled={!writeAllowed}
+                  onChange={(event) => role.set(event.target.value)}
+                >
+                  <option value="">Leave unchanged</option>
+                  {role.value && !knownStateIds.has(role.value) ? (
+                    <option value={role.value}>{role.value} (saved value)</option>
+                  ) : null}
+                  {teamStates.map((state) => (
+                    <option key={state.id} value={state.id}>
+                      {state.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="block text-xs text-muted-foreground">{role.description}</span>
+              </label>
+            ))}
+          </div>
+        </details>
+      </AutopilotSetupStep>
+
+      <AutopilotSetupStep
+        step={4}
+        title="Turn on intake"
+        done={mode !== "disabled"}
+        locked={mode === "disabled" && !(connected && issuesChosen && projectsMapped)}
+        summary={INTAKE_MODE_LABEL[mode]}
+      >
+        <AutopilotIntakeModePicker
+          value={mode}
+          modes={["disabled", "shadow", "queue"]}
+          onChange={setMode}
+          disabled={!writeAllowed}
+        />
+      </AutopilotSetupStep>
+
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex justify-end">
+        <Button disabled={!writeAllowed} onClick={save}>
+          Save Linear settings
+        </Button>
+      </div>
       <Dialog
         open={pendingProjectMapping !== null}
         onOpenChange={(open) => {
@@ -836,6 +777,6 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           </DialogFooter>
         </DialogPopup>
       </Dialog>
-    </SettingsPageContainer>
+    </AutopilotSourcesLayout>
   );
 }

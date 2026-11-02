@@ -70,6 +70,7 @@ const harness = (pageFactory: (page: number) => LinearAutopilotClient.LinearAuto
         listPending: () => Effect.succeed([]),
         getIssueContext: () => Effect.succeed(null),
         markDispatched: () => Effect.void,
+        requeue: () => Effect.void,
       }),
     ),
   );

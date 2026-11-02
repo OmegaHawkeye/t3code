@@ -53,6 +53,7 @@ describe("V2 preview upgrade", () => {
         [71, "LinearAutopilotIssueContext"],
         [72, "LinearAutopilotRunBaseRef"],
         [73, "AutopilotTicketSources"],
+        [74, "LinearAutopilotWorkflowSnapshot"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -149,6 +150,7 @@ describe("V2 preview upgrade", () => {
         [71, "LinearAutopilotIssueContext"],
         [72, "LinearAutopilotRunBaseRef"],
         [73, "AutopilotTicketSources"],
+        [74, "LinearAutopilotWorkflowSnapshot"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

@@ -64,7 +64,10 @@ export type T3McpToolSummaryAction =
   | "browser"
   | "device"
   | "html-preview"
-  | "html-render";
+  | "html-render"
+  | "autopilot-run-list"
+  | "autopilot-run-cancel"
+  | "autopilot-run-restart";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -161,6 +164,18 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_worktree_handoff: tool(
     ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],
     "worktree-handoff",
+  ),
+  t3_autopilot_run_list: tool(
+    ["List", "Listing", "Listed", "Autopilot runs"],
+    "autopilot-run-list",
+  ),
+  t3_autopilot_run_cancel: tool(
+    ["Cancel", "Canceling", "Cancelled", "an Autopilot run"],
+    "autopilot-run-cancel",
+  ),
+  t3_autopilot_run_restart: tool(
+    ["Restart", "Restarting", "Restarted", "an Autopilot run"],
+    "autopilot-run-restart",
   ),
   t3_worktree_status: tool(["Get", "Getting", "Got", "thread worktree status"], "worktree-status"),
   preview_status: tool(["Get", "Getting", "Got", "preview browser status"], "browser", "browser"),

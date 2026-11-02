@@ -24,12 +24,11 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementErrors from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
+import * as LinearAutopilotWorkflow from "./LinearAutopilotWorkflow.ts";
 import type { LinearAutopilotSettings, ServerSettingsError } from "@t3tools/contracts";
 
 const APPROVAL_POLICY_VERSION = "human-review-v1";
 const MAX_PHASE_SUMMARY_LENGTH = 4000;
-const MAX_IMPLEMENTATION_REPAIR_ROUNDS = 2;
-const MAX_CI_REPAIR_ROUNDS = 1;
 
 export interface LinearAutopilotReconcileResult {
   readonly runsChecked: number;
@@ -54,6 +53,7 @@ export class LinearAutopilotReconciler extends Context.Service<
       | ThreadManagementErrors.ThreadManagementError
       | Orchestrator.OrchestratorV2Error
       | PullRequestService.PullRequestError
+      | LinearAutopilotWorkflow.LinearAutopilotWorkflowFailure
       | PlatformError.PlatformError
     >;
   }
@@ -378,10 +378,7 @@ const make = Effect.gen(function* () {
               if (!launched) deferred += 1;
               continue;
             }
-            if (
-              repair?.status === "failed" ||
-              (repair?.attemptNumber ?? 0) >= MAX_IMPLEMENTATION_REPAIR_ROUNDS
-            ) {
+            if (repair?.status === "failed") {
               const transitioned = yield* runs.transition({
                 runId: run.runId,
                 expectedRevision: run.revision,
@@ -393,6 +390,43 @@ const make = Effect.gen(function* () {
                 yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
               continue;
             }
+            const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "implement"),
+            );
+            const retry = yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
+                workflowExecution,
+                "verify-fail",
+              ),
+            );
+            const retryNode =
+              retry._tag === "advanced"
+                ? LinearAutopilotWorkflow.workflowNode(retry.state.definition, retry.state.nodeId)
+                : undefined;
+            if (retry._tag !== "advanced" || retryNode?.kind !== "implement") {
+              const transitioned = yield* runs.transition({
+                runId: run.runId,
+                expectedRevision: run.revision,
+                nextState: "paused",
+                updatedAt: yield* DateTime.now,
+              });
+              const autopilot = currentSettings.linearAutopilot;
+              if (transitioned)
+                yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
+              continue;
+            }
+            const checkpointed = yield* runs.checkpointWorkflow({
+              runId: run.runId,
+              expectedRevision: run.revision,
+              workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(retry.state),
+              ),
+              updatedAt: yield* DateTime.now,
+            });
+            if (!checkpointed) {
+              deferred += 1;
+              continue;
+            }
             const launched = yield* launchImplementationFollowUp(
               run,
               "repair",
@@ -402,11 +436,28 @@ const make = Effect.gen(function* () {
             if (!launched) deferred += 1;
             continue;
           }
+          const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "implement"),
+          );
+          const next = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "done"),
+          );
+          if (
+            next._tag !== "advanced" ||
+            LinearAutopilotWorkflow.workflowNode(next.state.definition, next.state.nodeId)?.kind !==
+              "merge"
+          ) {
+            deferred += 1;
+            continue;
+          }
           yield* runs.transition({
             runId: run.runId,
             expectedRevision: run.revision,
             nextState: "delivering",
             updatedAt: yield* DateTime.now,
+            workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(next.state),
+            ),
           });
           continue;
         }
@@ -480,30 +531,90 @@ const make = Effect.gen(function* () {
               yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
             continue;
           }
-          if (pullRequestSummary.checksState !== "passing") {
+          let workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "merge"),
+          );
+          if (
+            attempt.attemptNumber > 1 &&
+            LinearAutopilotWorkflow.workflowNode(
+              workflowExecution.definition,
+              workflowExecution.nodeId,
+            )?.kind === "implement"
+          ) {
+            const merge = yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "done"),
+            );
             if (
-              pullRequestSummary.checksState === "failing" &&
-              attempt.attemptNumber <= MAX_CI_REPAIR_ROUNDS
+              merge._tag !== "advanced" ||
+              LinearAutopilotWorkflow.workflowNode(merge.state.definition, merge.state.nodeId)
+                ?.kind !== "merge"
             ) {
-              const checksResult = yield* pullRequests.checks(reference).pipe(Effect.result);
-              if (checksResult._tag === "Failure" || checksResult.success === null) {
-                deferred += 1;
+              deferred += 1;
+              continue;
+            }
+            const checkpointed = yield* runs.checkpointWorkflow({
+              runId: run.runId,
+              expectedRevision: run.revision,
+              workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(merge.state),
+              ),
+              updatedAt: yield* DateTime.now,
+            });
+            if (!checkpointed) {
+              deferred += 1;
+              continue;
+            }
+            workflowExecution = merge.state;
+            run = (yield* runs.getById(run.runId)) ?? run;
+          }
+          if (pullRequestSummary.checksState !== "passing") {
+            if (pullRequestSummary.checksState === "failing") {
+              const retry = yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
+                  workflowExecution,
+                  "ci-fail",
+                ),
+              );
+              const implementNode =
+                retry._tag === "advanced"
+                  ? LinearAutopilotWorkflow.workflowNode(retry.state.definition, retry.state.nodeId)
+                  : undefined;
+              if (retry._tag === "advanced" && implementNode?.kind === "implement") {
+                const checksResult = yield* pullRequests.checks(reference).pipe(Effect.result);
+                if (checksResult._tag === "Failure" || checksResult.success === null) {
+                  deferred += 1;
+                  continue;
+                }
+                const failures = checksResult.success.checks
+                  .filter(
+                    (check) => check.status === "failure" || check.status === "action-required",
+                  )
+                  .slice(0, 20)
+                  .map((check) => `${check.name}: ${check.description ?? check.status}`)
+                  .join("\n")
+                  .slice(0, MAX_PHASE_SUMMARY_LENGTH);
+                const checkpointed = yield* runs.checkpointWorkflow({
+                  runId: run.runId,
+                  expectedRevision: run.revision,
+                  workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+                    LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(retry.state),
+                  ),
+                  updatedAt: yield* DateTime.now,
+                });
+                if (!checkpointed) {
+                  deferred += 1;
+                  continue;
+                }
+                run = (yield* runs.getById(run.runId)) ?? run;
+                const launched = yield* launchImplementationFollowUp(
+                  run,
+                  "delivery",
+                  attempt.attemptNumber + 1,
+                  `CI failed for pull request ${pullRequest.url}. Make one bounded repair to address only these reported failures, run the affected checks, then push the repair to the same pull request branch. Do not create another pull request, merge, or mark the source ticket done.\n\n${failures || "The host reports failing checks without detailed names."}`,
+                );
+                if (!launched) deferred += 1;
                 continue;
               }
-              const failures = checksResult.success.checks
-                .filter((check) => check.status === "failure" || check.status === "action-required")
-                .slice(0, 20)
-                .map((check) => `${check.name}: ${check.description ?? check.status}`)
-                .join("\n")
-                .slice(0, MAX_PHASE_SUMMARY_LENGTH);
-              const launched = yield* launchImplementationFollowUp(
-                run,
-                "delivery",
-                attempt.attemptNumber + 1,
-                `CI failed for pull request ${pullRequest.url}. Make one bounded repair to address only these reported failures, run the affected checks, then push the repair to the same pull request branch. Do not create another pull request, merge, or mark the source ticket done.\n\n${failures || "The host reports failing checks without detailed names."}`,
-              );
-              if (!launched) deferred += 1;
-              continue;
             }
             if (pullRequestSummary.checksState === "failing") {
               const transitioned = yield* runs.transition({
@@ -520,11 +631,23 @@ const make = Effect.gen(function* () {
             deferred += 1;
             continue;
           }
+          const completedWorkflow = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "ci-pass"),
+          );
+          if (completedWorkflow._tag !== "completed") {
+            deferred += 1;
+            continue;
+          }
           const delivered = yield* runs.transition({
             runId: run.runId,
             expectedRevision: run.revision,
             nextState: "delivered",
             updatedAt: yield* DateTime.now,
+            workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(
+                completedWorkflow.state,
+              ),
+            ),
           });
           const autopilot = currentSettings.linearAutopilot;
           if (delivered)
@@ -543,11 +666,28 @@ const make = Effect.gen(function* () {
           attempt?.status === "succeeded" &&
           attempt.summary !== null
         ) {
+          const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "plan"),
+          );
+          const next = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "done"),
+          );
+          if (
+            next._tag !== "advanced" ||
+            LinearAutopilotWorkflow.workflowNode(next.state.definition, next.state.nodeId)?.kind !==
+              "review"
+          ) {
+            deferred += 1;
+            continue;
+          }
           const transitioned = yield* runs.transition({
             runId: run.runId,
             expectedRevision: run.revision,
             nextState: "reviewing",
             updatedAt: yield* DateTime.now,
+            workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+              LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(next.state),
+            ),
           });
           if (!transitioned) {
             deferred += 1;
@@ -562,11 +702,28 @@ const make = Effect.gen(function* () {
           deferred += 1;
           continue;
         }
-        const reviewAttempt = yield* attempts.getLatest({ runId: run.runId, phase: "review" });
+        const latestReviewAttempt = yield* attempts.getLatest({
+          runId: run.runId,
+          phase: "review",
+        });
+        const reviewAttempt =
+          latestReviewAttempt?.attemptNumber === planAttempt.attemptNumber
+            ? latestReviewAttempt
+            : null;
         if (reviewAttempt === null) {
           const projectId = run.projectId;
           const baseRef = run.baseRef;
-          const reviewModel = currentSettings.reviewGuideModelSelection;
+          const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "review"),
+          );
+          const reviewNode = LinearAutopilotWorkflow.workflowNode(
+            workflowExecution.definition,
+            workflowExecution.nodeId,
+          );
+          const reviewModel =
+            reviewNode?.kind === "review"
+              ? (reviewNode.persona?.modelSelection ?? currentSettings.reviewGuideModelSelection)
+              : null;
           if (
             projectId === null ||
             baseRef === null ||
@@ -600,6 +757,7 @@ const make = Effect.gen(function* () {
           yield* phaseLaunch.launchReadOnly({
             runId: run.runId,
             phase: "review",
+            attemptNumber: planAttempt.attemptNumber,
             projectId,
             baseRef,
             modelSelection: reviewModel,
@@ -607,6 +765,9 @@ const make = Effect.gen(function* () {
             issueTitle: issue.title,
             issueDescription: issue.description,
             reviewContext: planAttempt.summary,
+            ...(reviewNode?.kind !== "review" || reviewNode.persona?.instructions === undefined
+              ? {}
+              : { personaInstructions: reviewNode.persona.instructions }),
           });
           reviewsLaunched += 1;
           continue;
@@ -620,6 +781,76 @@ const make = Effect.gen(function* () {
         if (verdict === undefined) {
           deferred += 1;
           continue;
+        }
+        if (verdict === "REVISE") {
+          const workflowExecution = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.executionFromSnapshot(run.workflowJson, "review"),
+          );
+          const retry = yield* LinearAutopilotWorkflow.effect(() =>
+            LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(workflowExecution, "revise"),
+          );
+          const planNode =
+            retry._tag === "advanced"
+              ? LinearAutopilotWorkflow.workflowNode(retry.state.definition, retry.state.nodeId)
+              : undefined;
+          const planThreadId = planAttempt.threadId;
+          if (
+            retry._tag === "advanced" &&
+            planNode?.kind === "plan" &&
+            planThreadId !== null &&
+            run.projectId !== null &&
+            run.baseRef !== null
+          ) {
+            const planProjection = yield* threads
+              .getThreadProjection(ThreadId.make(planThreadId))
+              .pipe(Effect.result);
+            if (planProjection._tag === "Failure") {
+              deferred += 1;
+              continue;
+            }
+            const issue = yield* intake.getIssueContext({
+              workspaceId: run.workspaceId,
+              issueId: run.issueId,
+            });
+            if (issue === null) {
+              deferred += 1;
+              continue;
+            }
+            const transitioned = yield* runs.transition({
+              runId: run.runId,
+              expectedRevision: run.revision,
+              nextState: "planning",
+              updatedAt: yield* DateTime.now,
+              workflowJson: yield* LinearAutopilotWorkflow.effect(() =>
+                LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(retry.state),
+              ),
+            });
+            if (!transitioned) {
+              deferred += 1;
+              continue;
+            }
+            yield* phaseLaunch.launchReadOnly({
+              runId: run.runId,
+              phase: "planning",
+              attemptNumber: planAttempt.attemptNumber + 1,
+              projectId: run.projectId,
+              baseRef: run.baseRef,
+              modelSelection:
+                planNode.persona?.modelSelection ?? planProjection.success.thread.modelSelection,
+              ...(planNode.persona?.instructions === undefined
+                ? {}
+                : { personaInstructions: planNode.persona.instructions }),
+              issueIdentifier: issue.identifier,
+              issueTitle: issue.title,
+              issueDescription: issue.description,
+              reviewContext: reviewAttempt.summary,
+            });
+            continue;
+          }
+          if (retry._tag !== "budget-exhausted") {
+            deferred += 1;
+            continue;
+          }
         }
         const settingsForLinear = currentSettings.linearAutopilot;
         if (

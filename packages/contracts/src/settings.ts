@@ -45,6 +45,8 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import type { AutopilotTicketSource } from "./autopilotTicket.ts";
+import { LinearAutopilotWorkflow } from "./linearAutopilotWorkflow.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1073,10 +1075,12 @@ export const AuthIdlePeriodDays = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_AUTH_IDLE_PERIOD_DAYS, maximum: MAX_AUTH_IDLE_PERIOD_DAYS }),
 );
 
+export const AutopilotIntakeMode = Schema.Literals(["disabled", "shadow", "queue"]);
+export type AutopilotIntakeMode = typeof AutopilotIntakeMode.Type;
+
 export const LinearAutopilotSettings = Schema.Struct({
-  mode: Schema.Literals(["disabled", "shadow", "queue"]).pipe(
-    Schema.withDecodingDefault(Effect.succeed("disabled" as const)),
-  ),
+  /** Linear intake mode, and the fallback for sources that have no mode of their own yet. */
+  mode: AutopilotIntakeMode.pipe(Schema.withDecodingDefault(Effect.succeed("disabled" as const))),
   teamId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   readyStateIds: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1090,6 +1094,10 @@ export const LinearAutopilotSettings = Schema.Struct({
   projectMappings: Schema.Record(TrimmedNonEmptyString, ProjectId).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Optional project-specific workflow definitions; absent projects use the built-in default. */
+  workflows: Schema.Record(ProjectId, LinearAutopilotWorkflow).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   clientId: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
   clientSecret: TrimmedString.pipe(secretSetting, Schema.withDecodingDefault(Effect.succeed(""))),
   githubIssueTriggerLabel: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1097,6 +1105,8 @@ export const LinearAutopilotSettings = Schema.Struct({
   githubIssueProjectMappings: Schema.Record(TrimmedNonEmptyString, ProjectId).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  // Absent on settings saved before intake mode was per source; those inherit `mode`.
+  githubIssueMode: Schema.optionalKey(AutopilotIntakeMode),
   githubAppSlug: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   githubWebhookSecret: TrimmedString.pipe(
     secretSetting,
@@ -1117,8 +1127,18 @@ export const LinearAutopilotSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   slackProjectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  slackMode: Schema.optionalKey(AutopilotIntakeMode),
 });
 export type LinearAutopilotSettings = typeof LinearAutopilotSettings.Type;
+
+export function autopilotSourceMode(
+  settings: Pick<LinearAutopilotSettings, "mode" | "githubIssueMode" | "slackMode">,
+  source: AutopilotTicketSource,
+): AutopilotIntakeMode {
+  if (source === "github") return settings.githubIssueMode ?? settings.mode;
+  if (source === "slack") return settings.slackMode ?? settings.mode;
+  return settings.mode;
+}
 
 export const ServerSettings = Schema.Struct({
   // Null means no client has migrated this preference yet; an empty value is
@@ -1383,6 +1403,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "write-secret",
   "write-file",
   "prepare-directory",
+  "validate-autopilot-workflow",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -1393,6 +1414,8 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
+    /** Why a rejected value is invalid, for errors the user can fix. */
+    detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -1403,7 +1426,8 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
       this.environmentVariable === undefined
         ? ""
         : ` and environment variable ${this.environmentVariable}`;
-    return `Server settings ${this.operation} failed${provider}${variable} at ${this.settingsPath}.`;
+    const detail = this.detail === undefined ? "" : `: ${this.detail}`;
+    return `Server settings ${this.operation} failed${provider}${variable} at ${this.settingsPath}${detail}.`;
   }
 }
 

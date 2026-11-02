@@ -9,7 +9,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import { EnvironmentHttpApi } from "@t3tools/contracts";
+import { EnvironmentHttpApi, autopilotSourceMode } from "@t3tools/contracts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
@@ -98,13 +98,14 @@ export const layer = HttpApiBuilder.group(
           body,
         });
         if (!signatureValid) return rejected(401, "invalid_signature");
-        if (settings.mode !== "queue") return accepted();
+        const githubMode = autopilotSourceMode(settings, "github");
+        if (githubMode !== "queue") return accepted();
 
         const payload = Option.getOrNull(
           Schema.decodeOption(GitHubJsonPayload)(new TextDecoder().decode(body)),
         );
         if (payload === null) return rejected(400, "invalid_payload");
-        const ticket = mapGitHubIssueWebhookToTicket(payload, settings);
+        const ticket = mapGitHubIssueWebhookToTicket(payload, { ...settings, mode: githubMode });
         if (ticket === null) return accepted();
         yield* intake.ingestTicket({
           ticket: { ...ticket, sourceUpdatedAt: DateTime.formatIso(ticket.sourceUpdatedAt) },
@@ -153,7 +154,7 @@ export const layer = HttpApiBuilder.group(
         const event = envelope.event;
         const teamId = envelope.team_id;
         if (
-          settings.mode !== "queue" ||
+          autopilotSourceMode(settings, "slack") !== "queue" ||
           settings.slackProjectId === null ||
           !settings.slackBotToken ||
           settings.slackBotToken === "••••••" ||
@@ -225,7 +226,10 @@ export const layer = HttpApiBuilder.group(
             text: "Slack is not connected to Autopilot yet.",
           });
         }
-        if (settings.mode !== "queue" || settings.slackProjectId === null) {
+        if (
+          autopilotSourceMode(settings, "slack") !== "queue" ||
+          settings.slackProjectId === null
+        ) {
           return HttpServerResponse.jsonUnsafe({
             response_type: "ephemeral",
             text: "Autopilot is not configured to queue Slack requests yet.",

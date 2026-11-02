@@ -13,6 +13,7 @@ import * as LinearAutopilotRun from "./LinearAutopilotRun.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
 import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
+import * as LinearAutopilotWorkflow from "./LinearAutopilotWorkflow.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -140,7 +141,10 @@ const harness = (
   };
 };
 
-const seedRun = (state: "planning" | "reviewing" | "implementing" | "verifying" | "delivering") =>
+const seedRun = (
+  state: "planning" | "reviewing" | "implementing" | "verifying" | "delivering",
+  workflowJson?: string,
+) =>
   Effect.gen(function* () {
     const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
     yield* intake.ingest({
@@ -162,6 +166,7 @@ const seedRun = (state: "planning" | "reviewing" | "implementing" | "verifying" 
       projectId,
       sourceUpdatedAt: now,
       snapshotHash: "a".repeat(64),
+      ...(workflowJson === undefined ? {} : { workflowJson }),
       createdAt: now,
     });
     yield* runs.transition({
@@ -177,6 +182,7 @@ const seedRun = (state: "planning" | "reviewing" | "implementing" | "verifying" 
         expectedRevision: 1,
         nextState: "reviewing",
         updatedAt: now,
+        ...(workflowJson === undefined ? {} : { workflowJson }),
       });
     }
     if (state === "implementing" || state === "verifying" || state === "delivering") {
@@ -364,6 +370,44 @@ it.effect("sends only an explicit approve verdict to the exact human approval ga
   }).pipe(Effect.provide(setup.layer));
 });
 
+it.effect("takes a bounded revise edge and launches a fresh planning attempt", () => {
+  const workflow = {
+    ...LinearAutopilotWorkflow.defaultWorkflow,
+    edges: LinearAutopilotWorkflow.defaultWorkflow.edges.map((edge) =>
+      edge.from === "review" && edge.on === "revise" ? { ...edge, budget: 1 } : edge,
+    ),
+  };
+  const execution = LinearAutopilotWorkflow.advanceLinearAutopilotWorkflow(
+    LinearAutopilotWorkflow.startLinearAutopilotWorkflow(workflow),
+    "done",
+  ).state;
+  const setup = harness({
+    projection: { thread: { modelSelection: plannerModel }, runs: [], messages: [], turnItems: [] },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun(
+      "reviewing",
+      LinearAutopilotWorkflow.encodeLinearAutopilotWorkflowExecution(execution),
+    );
+    yield* seedAttempt(runId, "planning", "Initial plan");
+    yield* seedAttempt(runId, "review", "VERDICT: REVISE\nAdd recovery coverage.");
+
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+
+    assert.equal(setup.reviewLaunches.length, 1);
+    assert.equal(setup.reviewLaunches[0]?.phase, "planning");
+    assert.equal(setup.reviewLaunches[0]?.attemptNumber, 2);
+    const run = yield* (yield* LinearAutopilotRuns.LinearAutopilotRunRepository).getById(runId);
+    assert.equal(run?.state, "planning");
+    const storedExecution = LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(
+      run?.workflowJson ?? "",
+    );
+    assert.equal(storedExecution.nodeId, "plan");
+    assert.deepStrictEqual(Object.values(storedExecution.traversals), [1]);
+  }).pipe(Effect.provide(setup.layer));
+});
+
 it.effect("records completed implementation and advances to verification", () => {
   const setup = harness({
     projection: {
@@ -475,7 +519,12 @@ it.effect("records explicit passing verification before entering delivery", () =
     const result = yield* reconciler.reconcile();
     assert.equal(result.phasesCompleted, 1);
     const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
-    assert.equal((yield* runs.getById(runId))?.state, "delivering");
+    const run = yield* runs.getById(runId);
+    assert.equal(run?.state, "delivering");
+    const execution = LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(
+      run?.workflowJson ?? "",
+    );
+    assert.equal(execution.nodeId, "merge");
   }).pipe(Effect.provide(setup.layer));
 });
 
@@ -507,6 +556,12 @@ it.effect("uses a bounded repair follow-up after verification failure", () => {
     assert.equal(repair.attemptNumber, 1);
     assert.include(repair.instruction, "pnpm test");
     assert.include(repair.instruction, "Do not commit, push");
+    const run = yield* (yield* LinearAutopilotRuns.LinearAutopilotRunRepository).getById(runId);
+    const execution = LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(
+      run?.workflowJson ?? "",
+    );
+    assert.equal(execution.nodeId, "implement");
+    assert.deepEqual(Object.values(execution.traversals), [1]);
   }).pipe(Effect.provide(setup.layer));
 });
 
@@ -639,5 +694,11 @@ it.effect("opens one bounded CI repair follow-up for a failing pull request", ()
     assert.equal(ciRepair.attemptNumber, 2);
     assert.include(ciRepair.instruction, "unit-tests: assertion failed");
     assert.include(ciRepair.instruction, "Do not create another pull request");
+    const run = yield* (yield* LinearAutopilotRuns.LinearAutopilotRunRepository).getById(runId);
+    const workflowState = LinearAutopilotWorkflow.decodeLinearAutopilotWorkflowExecution(
+      run?.workflowJson ?? "",
+    );
+    assert.equal(workflowState.nodeId, "implement");
+    assert.deepStrictEqual(Object.values(workflowState.traversals), [1]);
   }).pipe(Effect.provide(setup.layer));
 });

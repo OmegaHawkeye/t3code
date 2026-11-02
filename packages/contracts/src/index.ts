@@ -48,6 +48,7 @@ export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./linearAutopilot.ts";
+export * from "./linearAutopilotWorkflow.ts";
 export * from "./autopilotTicket.ts";
 export * from "./filesystem.ts";
 export * from "./agentSessions.ts";
