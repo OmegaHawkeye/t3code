@@ -30,6 +30,7 @@ it.effect("posts GitHub status and pull request links to the allowlisted issue",
               };
             }),
           credential: () => Effect.die("Unexpected credential read"),
+          appCredential: () => Effect.die("Unexpected app credential read"),
         }),
       ),
     ),

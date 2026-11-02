@@ -130,33 +130,39 @@ const make = Effect.gen(function* () {
   });
 
   return AuthMcpRefreshTokenRepository.of({
-    insert: (input) =>
+    insert: Effect.fn("AuthMcpRefreshTokenRepository.insert")((input) =>
       insertRow(input).pipe(Effect.mapError(toRepositoryError("AuthMcpRefreshTokens.insert"))),
-    findByHash: (tokenHash) =>
+    ),
+    findByHash: Effect.fn("AuthMcpRefreshTokenRepository.findByHash")((tokenHash) =>
       findRow(tokenHash).pipe(
         Effect.mapError(toRepositoryError("AuthMcpRefreshTokens.findByHash")),
       ),
-    markRotated: ({ tokenHash, rotatedAt, successor }) =>
-      sql
-        .withTransaction(
-          markRotatedRow({ tokenHash, rotatedAt, successorHash: successor.tokenHash }).pipe(
-            Effect.flatMap((rows) =>
-              rows.length === 0
-                ? Effect.succeed(false)
-                : insertRow(successor).pipe(Effect.as(true)),
+    ),
+    markRotated: Effect.fn("AuthMcpRefreshTokenRepository.markRotated")(
+      ({ tokenHash, rotatedAt, successor }) =>
+        sql
+          .withTransaction(
+            markRotatedRow({ tokenHash, rotatedAt, successorHash: successor.tokenHash }).pipe(
+              Effect.flatMap((rows) =>
+                rows.length === 0
+                  ? Effect.succeed(false)
+                  : insertRow(successor).pipe(Effect.as(true)),
+              ),
             ),
-          ),
-        )
-        .pipe(Effect.mapError(toRepositoryError("AuthMcpRefreshTokens.markRotated"))),
-    deleteForSession: (sessionId) =>
+          )
+          .pipe(Effect.mapError(toRepositoryError("AuthMcpRefreshTokens.markRotated"))),
+    ),
+    deleteForSession: Effect.fn("AuthMcpRefreshTokenRepository.deleteForSession")((sessionId) =>
       sql`DELETE FROM auth_mcp_refresh_tokens WHERE session_id = ${sessionId}`.pipe(
         Effect.asVoid,
         Effect.mapError(toRepositoryError("AuthMcpRefreshTokens.deleteForSession")),
       ),
-    deleteExpired: (now) =>
+    ),
+    deleteExpired: Effect.fn("AuthMcpRefreshTokenRepository.deleteExpired")((now) =>
       deleteExpiredRows({ now }).pipe(
         Effect.mapError(toRepositoryError("AuthMcpRefreshTokens.deleteExpired")),
       ),
+    ),
   });
 });
 

@@ -4,8 +4,11 @@ import * as Schema from "effect/Schema";
 import { ProjectId } from "./baseSchemas.ts";
 import { AutopilotTicket } from "./autopilotTicket.ts";
 
+const decodeTicket = Schema.decodeSync(AutopilotTicket);
+const decodeUnknownTicket = Schema.decodeUnknownSync(AutopilotTicket);
+
 it("decodes source-neutral tickets without losing their source identity", () => {
-  const decoded = Schema.decodeUnknownSync(AutopilotTicket)({
+  const decoded = decodeTicket({
     source: "github",
     sourceAccountId: "github.com:omega/t3code",
     sourceTicketId: "42",
@@ -24,7 +27,7 @@ it("decodes source-neutral tickets without losing their source identity", () => 
 
 it("rejects unknown ticket sources", () => {
   assert.throws(() =>
-    Schema.decodeUnknownSync(AutopilotTicket)({
+    decodeUnknownTicket({
       source: "email",
       sourceAccountId: "mailbox-1",
       sourceTicketId: "42",

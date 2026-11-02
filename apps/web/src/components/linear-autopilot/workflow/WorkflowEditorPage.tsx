@@ -78,6 +78,7 @@ export function WorkflowEditorPage() {
   const [projectsFailed, setProjectsFailed] = useState(false);
   const [projectId, setProjectId] = useState<ProjectId | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the project list from the server once on mount.
   useEffect(() => {
     let cancelled = false;
     void runPrimaryHttp(

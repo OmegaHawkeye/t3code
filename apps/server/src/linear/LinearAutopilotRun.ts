@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as LinearAutopilotClient from "./LinearAutopilotClient.ts";
 import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
@@ -36,6 +37,10 @@ export class LinearAutopilotRun extends Context.Service<
   }
 >()("t3/linear/LinearAutopilotRun") {}
 
+const isClientError = Schema.is(LinearAutopilotClient.LinearAutopilotClientError);
+const isUnauthorized = (error: unknown) =>
+  isClientError(error) && error.reason === "http" && error.status === 401;
+
 const make = Effect.gen(function* () {
   const client = yield* LinearAutopilotClient.LinearAutopilotClient;
   const tokenProvider = yield* LinearAutopilotToken.LinearAutopilotTokenProvider;
@@ -56,16 +61,8 @@ const make = Effect.gen(function* () {
                   ...(input.after === undefined ? {} : { after: input.after }),
                 }),
               ),
-              Effect.catch((error) => {
-                if (
-                  error._tag !== "LinearAutopilotClientError" ||
-                  error.reason !== "http" ||
-                  error.status !== 401
-                ) {
-                  return Effect.fail(error);
-                }
-
-                return tokenProvider.mint({ forceRefresh: true }).pipe(
+              Effect.catchIf(isUnauthorized, () =>
+                tokenProvider.mint({ forceRefresh: true }).pipe(
                   Effect.tap((replacementToken) => Ref.set(tokenRef, replacementToken)),
                   Effect.flatMap((accessToken) =>
                     client.listIssues({
@@ -75,29 +72,21 @@ const make = Effect.gen(function* () {
                       ...(input.after === undefined ? {} : { after: input.after }),
                     }),
                   ),
-                );
-              }),
+                ),
+              ),
             );
 
           const updateIssueState: LinearAutopilotRunSession["updateIssueState"] = (input) =>
             Ref.get(tokenRef).pipe(
               Effect.flatMap((accessToken) => client.updateIssueState({ accessToken, ...input })),
-              Effect.catch((error) => {
-                if (
-                  error._tag !== "LinearAutopilotClientError" ||
-                  error.reason !== "http" ||
-                  error.status !== 401
-                ) {
-                  return Effect.fail(error);
-                }
-
-                return tokenProvider.mint({ forceRefresh: true }).pipe(
+              Effect.catchIf(isUnauthorized, () =>
+                tokenProvider.mint({ forceRefresh: true }).pipe(
                   Effect.tap((replacementToken) => Ref.set(tokenRef, replacementToken)),
                   Effect.flatMap((accessToken) =>
                     client.updateIssueState({ accessToken, ...input }),
                   ),
-                );
-              }),
+                ),
+              ),
             );
 
           return { listIssuesPage, updateIssueState };

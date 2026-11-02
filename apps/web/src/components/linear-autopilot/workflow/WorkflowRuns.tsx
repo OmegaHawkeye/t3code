@@ -37,7 +37,7 @@ const STATE_LABEL: Record<LinearAutopilotRunState, string> = {
 
 const STALE_MESSAGE = "The run moved on since this list loaded. Refresh and try again.";
 
-export const isFinishedRun = (state: LinearAutopilotRunState) =>
+const isFinishedRun = (state: LinearAutopilotRunState) =>
   state === "delivered" || state === "failed" || state === "cancelled";
 
 const stateVariant = (state: LinearAutopilotRunState) =>
@@ -65,6 +65,7 @@ export function useProjectRuns(projectId: ProjectId) {
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the project's runs from the server.
   useEffect(() => {
     let active = true;
     void loadRuns(projectId).then(

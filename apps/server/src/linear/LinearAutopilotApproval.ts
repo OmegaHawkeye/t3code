@@ -59,62 +59,64 @@ const make = Effect.gen(function* () {
   const linear = yield* LinearAutopilotRun.LinearAutopilotRun;
   const ticketFeedback = yield* TicketSourceFeedback.TicketSourceFeedback;
 
-  const requestHumanApproval: LinearAutopilotApproval["Service"]["requestHumanApproval"] = (
-    input,
-  ) =>
-    Effect.gen(function* () {
-      const run = yield* runs.getById(input.runId);
-      if (run === null) return "stale";
-      if (!input.reviewerApproved) {
-        if (run.state !== "reviewing" || run.revision !== input.expectedRevision) return "stale";
-        const paused = yield* runs.transition({
-          runId: input.runId,
-          expectedRevision: input.expectedRevision,
-          nextState: "paused",
-          updatedAt: input.reviewedAt,
-        });
-        return paused ? "review_rejected" : "stale";
-      }
+  const requestHumanApproval: LinearAutopilotApproval["Service"]["requestHumanApproval"] =
+    Effect.fn("LinearAutopilotApproval.requestHumanApproval")((input) =>
+      Effect.gen(function* () {
+        const run = yield* runs.getById(input.runId);
+        if (run === null) return "stale";
+        if (!input.reviewerApproved) {
+          if (run.state !== "reviewing" || run.revision !== input.expectedRevision) return "stale";
+          const paused = yield* runs.transition({
+            runId: input.runId,
+            expectedRevision: input.expectedRevision,
+            nextState: "paused",
+            updatedAt: input.reviewedAt,
+          });
+          return paused ? "review_rejected" : "stale";
+        }
 
-      const alreadyAwaitingApproval =
-        run.state === "needs_approval" &&
-        run.approvalPlanHash === input.planHash &&
-        run.approvalPolicyVersion === input.policyVersion &&
-        run.approvalProjectId === input.projectId &&
-        run.approvalBaseRef === input.baseRef;
-      if (!alreadyAwaitingApproval) {
-        if (run.state !== "reviewing" || run.revision !== input.expectedRevision) return "stale";
-        const changed = yield* runs.transition({
-          runId: input.runId,
-          expectedRevision: input.expectedRevision,
-          nextState: "needs_approval",
-          updatedAt: input.reviewedAt,
-          approvalPlanHash: input.planHash,
-          approvalPolicyVersion: input.policyVersion,
-          approvalProjectId: input.projectId,
-          approvalBaseRef: input.baseRef,
-        });
-        if (!changed) return "stale";
-      }
+        const alreadyAwaitingApproval =
+          run.state === "needs_approval" &&
+          run.approvalPlanHash === input.planHash &&
+          run.approvalPolicyVersion === input.policyVersion &&
+          run.approvalProjectId === input.projectId &&
+          run.approvalBaseRef === input.baseRef;
+        if (!alreadyAwaitingApproval) {
+          if (run.state !== "reviewing" || run.revision !== input.expectedRevision) return "stale";
+          const changed = yield* runs.transition({
+            runId: input.runId,
+            expectedRevision: input.expectedRevision,
+            nextState: "needs_approval",
+            updatedAt: input.reviewedAt,
+            approvalPlanHash: input.planHash,
+            approvalPolicyVersion: input.policyVersion,
+            approvalProjectId: input.projectId,
+            approvalBaseRef: input.baseRef,
+          });
+          if (!changed) return "stale";
+        }
 
-      if (run.source === "linear") {
-        const session = yield* linear.begin({ teamId: input.teamId });
-        yield* session.updateIssueState({
-          issueId: input.issueId,
-          stateId: input.needsHumanApprovalStateId,
-        });
-      } else if (!alreadyAwaitingApproval) {
-        yield* ticketFeedback.update({
-          source: run.source,
-          workspaceId: run.workspaceId,
-          issueId: run.issueId,
-          status: "needs_approval",
-        });
-      }
-      return "needs_approval";
-    });
+        if (run.source === "linear") {
+          const session = yield* linear.begin({ teamId: input.teamId });
+          yield* session.updateIssueState({
+            issueId: input.issueId,
+            stateId: input.needsHumanApprovalStateId,
+          });
+        } else if (!alreadyAwaitingApproval) {
+          yield* ticketFeedback.update({
+            source: run.source,
+            workspaceId: run.workspaceId,
+            issueId: run.issueId,
+            status: "needs_approval",
+          });
+        }
+        return "needs_approval";
+      }),
+    );
 
-  const approve: LinearAutopilotApproval["Service"]["approve"] = (input) =>
+  const approve: LinearAutopilotApproval["Service"]["approve"] = Effect.fn(
+    "LinearAutopilotApproval.approve",
+  )((input) =>
     Effect.gen(function* () {
       const run = yield* runs.getById(input.runId);
       if (run === null) return false;
@@ -133,7 +135,8 @@ const make = Effect.gen(function* () {
         return true;
       if (run.state !== "needs_approval" || run.revision !== input.expectedRevision) return false;
       return yield* runs.approve(input);
-    });
+    }),
+  );
 
   return LinearAutopilotApproval.of({ requestHumanApproval, approve });
 });

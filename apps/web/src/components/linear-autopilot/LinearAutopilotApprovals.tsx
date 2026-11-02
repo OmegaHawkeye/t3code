@@ -35,6 +35,7 @@ export function LinearAutopilotApprovals() {
     setLoading(false);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads pending approvals from the server once on mount.
   useEffect(() => {
     let active = true;
     const load = async () => {

@@ -100,7 +100,7 @@ const make = Effect.gen(function* () {
       catch: () => new SlackOAuthError({ reason: "invalid-origin" }),
     });
 
-  const start: SlackOAuth["Service"]["start"] = (input) =>
+  const start: SlackOAuth["Service"]["start"] = Effect.fn("SlackOAuth.start")((input) =>
     Effect.gen(function* () {
       const [callbackOrigin, returnOrigin] = yield* Effect.all([
         parseOrigin(input.callbackOrigin),
@@ -150,9 +150,10 @@ const make = Effect.gen(function* () {
         state,
       }).toString();
       return { authorizationUrl: authorization.toString(), redirectUri };
-    });
+    }),
+  );
 
-  const callback: SlackOAuth["Service"]["callback"] = (input) =>
+  const callback: SlackOAuth["Service"]["callback"] = Effect.fn("SlackOAuth.callback")((input) =>
     Effect.gen(function* () {
       const now = clock.currentTimeMillisUnsafe();
       const flow = yield* Ref.modify(flows, (current) => {
@@ -207,7 +208,8 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(() => new SlackOAuthError({ reason: "settings" })));
       return { returnUrl: flow.value.returnUrl, result: "connected" as const };
-    });
+    }),
+  );
 
   return SlackOAuth.of({ start, callback });
 });

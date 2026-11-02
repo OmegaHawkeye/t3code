@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   environmentAxisValue,
   primaryEnvironmentSettingsSearch,
-  projectAxisValue,
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
@@ -48,25 +47,6 @@ describe("settings scope environment labels", () => {
 });
 
 describe("settings scope axes", () => {
-  it("maps each axis to its search key and back", () => {
-    expect(projectAxisValue({})).toBe("all");
-    expect(projectAxisValue({ project: "app" })).toBe("app");
-    expect(selectProjectAxis({ machine: "second" }, "app")).toEqual({
-      project: "app",
-      machine: "second",
-    });
-    expect(selectProjectAxis({ machine: "second", project: "app" }, "all")).toEqual({
-      machine: "second",
-    });
-    expect(selectEnvironmentAxis({ project: "app" }, "first")).toEqual({
-      project: "app",
-      machine: "first",
-    });
-    expect(selectEnvironmentAxis({ project: "app", machine: "first" }, "all")).toEqual({
-      project: "app",
-    });
-  });
-
   it("drops a checkout narrowing from older links when either axis changes", () => {
     const checkout = { project: "app", checkout: "app@first", machine: "first" };
     expect(selectEnvironmentAxis(checkout, "second")).toEqual({

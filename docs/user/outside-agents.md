@@ -8,7 +8,7 @@ in once, and you choose what it may do.
 
 ## Get the MCP URL
 
-In **Settings → Connections**, open a saved environment's menu and choose
+In **Settings → Environments**, open a saved environment's menu and choose
 **Copy MCP URL**. The URL is the environment's address followed by `/mcp`, for
 example:
 
@@ -19,9 +19,13 @@ https://<environment-address>/mcp
 The copied URL uses the route this device is connected over, so an agent on the
 same device can reach it.
 
-- **An agent on your own computers** can use any address that computer reaches
-  the environment at: a LAN or Tailscale address, T3 Connect, or `localhost` on
-  the host. See [remote access](./remote-access.md).
+- **An agent on your own computers** can use `localhost` on the host, T3
+  Connect, or any `https` address, such as
+  [Tailscale HTTPS](./remote-access.md#tailscale-https). Signing in sends the
+  agent's credentials to the environment, and agents only do that over `https`
+  or to `localhost`. A plain-`http` LAN or Tailscale address, like
+  `http://100.x.y.z:3773`, lets an agent find the environment but not finish
+  signing in.
 - **A hosted agent**, such as ChatGPT or a bot running in the cloud, must reach
   the environment from the internet. Use the T3 Connect address. A Tailscale
   address only works from your own tailnet.
@@ -37,7 +41,7 @@ The page names the agent and where its access goes:
   Anyone who runs that service gets the access.
 
 Only approve a sign-in you just started. To approve, enter a pairing code from
-**Settings → Connections** or from `t3 auth pairing create` on the host. A
+**Settings → Sharing & access** or from `t3 auth pairing create` on the host. A
 browser already signed in to the environment with permission to manage access
 can approve without a code.
 
@@ -88,6 +92,28 @@ Any agent that supports remote MCP servers over HTTP with OAuth can connect. Giv
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
+## Scripts on the host
+
+On the machine that runs the environment, `t3 thread` uses the same tools
+without a sign-in:
+
+```sh
+id=$(t3 thread start . "Find why the tests are slow")
+t3 thread send "$id" "Now fix it" --wait
+t3 thread show "$id"
+t3 thread list
+```
+
+`.` means the project that contains the current folder; a project id also
+works. A new thread uses the project's default model and permission mode, and
+runs in the project folder unless you pass `--worktree <base-branch>`. `send`
+never interrupts: a busy thread gets the message as its next turn. Pass `-` as
+the message to read it from stdin.
+
+`--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
+2 when the agent waits for an answer you give in the app. Add `--json` for a
+result that always includes the thread id.
+
 ## Keep an agent signed in
 
 An agent stays connected while you use it. It renews its access in the
@@ -97,19 +123,19 @@ more.
 
 ## Remove an agent
 
-Approved agents appear under **Settings → Connections** like other clients.
+Approved agents appear under **Settings → Sharing & access** like other clients.
 Revoke one there to cut off its access immediately.
 
 ## Long-lived tokens
 
 Services and servers where nobody can approve a browser sign-in, such as a CI job
 or a headless machine, can use a long-lived token instead. Create one with
-`t3 setup-token` on the host, or under **Settings → Connections → Long-lived
-tokens**. Give it a label and a permission level: read-only, approval-required,
+`t3 setup-token` on the host, or under **Settings → Sharing & access →
+Long-lived tokens**. Give it a label and a permission level: read-only, approval-required,
 auto-accept-edits, auto, or full-access. Choose the narrowest level the service
 needs.
 
 The token is shown once, so copy it when it appears. It lasts 360 days and does
 not renew; when it expires, create a new one. Send it as a bearer token with
-requests to the MCP URL. Tokens are listed under **Settings → Connections**,
+requests to the MCP URL. Tokens are listed under **Settings → Sharing & access**,
 where you can revoke them. **Revoke other clients** leaves them alone.

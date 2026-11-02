@@ -1,5 +1,4 @@
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -189,7 +188,7 @@ const make = Effect.gen(function* () {
   });
 
   return LinearAutopilotPhaseAttemptRepository.of({
-    begin: (input) =>
+    begin: Effect.fn("LinearAutopilotPhaseAttemptRepository.begin")((input) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -200,12 +199,10 @@ const make = Effect.gen(function* () {
             );
             if (existing._tag === "Some") {
               if (existing.value.runId !== input.runId || existing.value.phase !== input.phase) {
-                return yield* Effect.fail(
-                  new PersistenceSqlError({
-                    operation: "LinearAutopilotPhaseAttempts.begin",
-                    detail: "Command ID already belongs to a different run phase",
-                  }),
-                );
+                return yield* new PersistenceSqlError({
+                  operation: "LinearAutopilotPhaseAttempts.begin",
+                  detail: "Command ID already belongs to a different run phase",
+                });
               }
               return { attempt: existing.value, created: false };
             }
@@ -242,27 +239,32 @@ const make = Effect.gen(function* () {
               ),
           }),
         ),
-    recordResult: (input) =>
+    ),
+    recordResult: Effect.fn("LinearAutopilotPhaseAttemptRepository.recordResult")((input) =>
       updateAttempt(input).pipe(
         Effect.map((rows) => rows.length > 0),
         Effect.mapError(toPersistenceSqlError("LinearAutopilotPhaseAttempts.recordResult:query")),
       ),
-    markRunning: (input) =>
+    ),
+    markRunning: Effect.fn("LinearAutopilotPhaseAttemptRepository.markRunning")((input) =>
       markAttemptRunning(input).pipe(
         Effect.map((rows) => rows.length > 0),
         Effect.mapError(toPersistenceSqlError("LinearAutopilotPhaseAttempts.markRunning:query")),
       ),
-    listRecoverable: (limit) =>
+    ),
+    listRecoverable: Effect.fn("LinearAutopilotPhaseAttemptRepository.listRecoverable")((limit) =>
       findRecoverable({ limit }).pipe(
         Effect.mapError(
           toPersistenceSqlError("LinearAutopilotPhaseAttempts.listRecoverable:query"),
         ),
       ),
-    getLatest: (input) =>
+    ),
+    getLatest: Effect.fn("LinearAutopilotPhaseAttemptRepository.getLatest")((input) =>
       findLatest(input).pipe(
         Effect.map((row) => (row._tag === "Some" ? row.value : null)),
         Effect.mapError(toPersistenceSqlError("LinearAutopilotPhaseAttempts.getLatest:query")),
       ),
+    ),
   });
 });
 

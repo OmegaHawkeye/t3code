@@ -41,6 +41,8 @@ const SlackEventEnvelope = Schema.Struct({
 });
 const GitHubJsonPayload = Schema.fromJsonString(Schema.Unknown);
 const SlackJsonEnvelope = Schema.fromJsonString(SlackEventEnvelope);
+const decodeGitHubJsonPayload = Schema.decodeOption(GitHubJsonPayload);
+const decodeSlackJsonEnvelope = Schema.decodeOption(SlackJsonEnvelope);
 
 function normalizeSlackText(text: string): string {
   return text.replace(/<@[A-Z0-9]+>/gu, "").trim();
@@ -78,185 +80,177 @@ export const layer = HttpApiBuilder.group(
         Effect.option,
       );
 
-    const githubIssueWebhook = ({
-      request,
-    }: {
-      readonly request: HttpServerRequest.HttpServerRequest;
-    }) =>
-      Effect.gen(function* () {
-        const bodyOption = yield* readBody(request);
-        if (Option.isNone(bodyOption)) return rejected(413, "body_too_large_or_unreadable");
-        const body = bodyOption.value;
-        const settings = (yield* settingsService.getSettings).linearAutopilot;
-        if (settings.githubWebhookSecret.length === 0)
-          return rejected(503, "github_not_configured");
-        const headers = request.headers;
-        const signatureValid = verifyWebhookSignature({
-          signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" },
-          secret: settings.githubWebhookSecret,
-          headers,
-          body,
-        });
-        if (!signatureValid) return rejected(401, "invalid_signature");
-        const githubMode = autopilotSourceMode(settings, "github");
-        if (githubMode !== "queue") return accepted();
-
-        const payload = Option.getOrNull(
-          Schema.decodeOption(GitHubJsonPayload)(new TextDecoder().decode(body)),
-        );
-        if (payload === null) return rejected(400, "invalid_payload");
-        const ticket = mapGitHubIssueWebhookToTicket(payload, { ...settings, mode: githubMode });
-        if (ticket === null) return accepted();
-        yield* intake.ingestTicket({
-          ticket: { ...ticket, sourceUpdatedAt: DateTime.formatIso(ticket.sourceUpdatedAt) },
-          eventId: headers["x-github-delivery"] ?? null,
-          observedAt: DateTime.formatIso(yield* DateTime.now),
-        });
-        return accepted();
-      });
-
-    const slackEventsWebhook = ({
-      request,
-    }: {
-      readonly request: HttpServerRequest.HttpServerRequest;
-    }) =>
-      Effect.gen(function* () {
-        const bodyOption = yield* readBody(request);
-        if (Option.isNone(bodyOption)) return rejected(413, "body_too_large_or_unreadable");
-        const body = bodyOption.value;
-        const settings = (yield* settingsService.getSettings).linearAutopilot;
-        if (!settings.slackSigningSecret || settings.slackSigningSecret === "••••••") {
-          return rejected(503, "slack_not_configured");
-        }
-        const timestamp = request.headers["x-slack-request-timestamp"];
-        const signature = request.headers["x-slack-signature"];
-        const nowSeconds = yield* Effect.clockWith((clock) =>
-          clock.currentTimeMillis.pipe(Effect.map((now) => Math.floor(now / 1000))),
-        );
-        if (
-          !verifySlackRequestSignature({
-            timestamp,
-            signature,
-            secret: settings.slackSigningSecret,
+    const githubIssueWebhook = Effect.fn("TicketSourceWebhookRoute.githubIssueWebhook")(
+      ({ request }: { readonly request: HttpServerRequest.HttpServerRequest }) =>
+        Effect.gen(function* () {
+          const bodyOption = yield* readBody(request);
+          if (Option.isNone(bodyOption)) return rejected(413, "body_too_large_or_unreadable");
+          const body = bodyOption.value;
+          const settings = (yield* settingsService.getSettings).linearAutopilot;
+          if (settings.githubWebhookSecret.length === 0)
+            return rejected(503, "github_not_configured");
+          const headers = request.headers;
+          const signatureValid = verifyWebhookSignature({
+            signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" },
+            secret: settings.githubWebhookSecret,
+            headers,
             body,
-            nowSeconds,
-          })
-        )
-          return rejected(401, "invalid_signature");
+          });
+          if (!signatureValid) return rejected(401, "invalid_signature");
+          const githubMode = autopilotSourceMode(settings, "github");
+          if (githubMode !== "queue") return accepted();
 
-        const envelope = Option.getOrNull(
-          Schema.decodeOption(SlackJsonEnvelope)(new TextDecoder().decode(body)),
-        );
-        if (envelope === null) return rejected(400, "invalid_payload");
-        if (envelope.type === "url_verification" && envelope.challenge !== undefined) {
-          return HttpServerResponse.jsonUnsafe({ challenge: envelope.challenge });
-        }
-        const event = envelope.event;
-        const teamId = envelope.team_id;
-        if (
-          autopilotSourceMode(settings, "slack") !== "queue" ||
-          settings.slackProjectId === null ||
-          !settings.slackBotToken ||
-          settings.slackBotToken === "••••••" ||
-          envelope.type !== "event_callback" ||
-          event?.type !== "app_mention" ||
-          event.subtype !== undefined ||
-          teamId === undefined ||
-          !settings.slackAllowedChannelIds.includes(event.channel)
-        )
+          const payload = Option.getOrNull(decodeGitHubJsonPayload(new TextDecoder().decode(body)));
+          if (payload === null) return rejected(400, "invalid_payload");
+          const ticket = mapGitHubIssueWebhookToTicket(payload, { ...settings, mode: githubMode });
+          if (ticket === null) return accepted();
+          yield* intake.ingestTicket({
+            ticket: { ...ticket, sourceUpdatedAt: DateTime.formatIso(ticket.sourceUpdatedAt) },
+            eventId: headers["x-github-delivery"] ?? null,
+            observedAt: DateTime.formatIso(yield* DateTime.now),
+          });
           return accepted();
+        }),
+    );
 
-        const text = normalizeSlackText(event.text);
-        const observedAt = DateTime.formatIso(yield* DateTime.now);
-        yield* intake.ingestTicket({
-          ticket: {
-            source: "slack",
-            sourceAccountId: `${teamId}:${event.channel}`,
-            sourceTicketId: event.ts,
-            identifier: `slack:${teamId}/${event.channel}/${event.ts}`,
-            title: ticketTitle(text),
-            url: `https://app.slack.com/client/${teamId}/${event.channel}/p${event.ts.replace(".", "")}`,
-            description: text,
-            projectId: settings.slackProjectId,
-            sourceUpdatedAt: observedAt,
-          },
-          eventId: envelope.event_id ?? null,
-          observedAt,
-        });
-        yield* postSlackMessage(settings.slackBotToken, {
-          channel: event.channel,
-          thread_ts: event.ts,
-          text: "Autopilot picked this up. I’ll post progress and approval updates in this thread.",
-        });
-        return accepted();
-      });
+    const slackEventsWebhook = Effect.fn("TicketSourceWebhookRoute.slackEventsWebhook")(
+      ({ request }: { readonly request: HttpServerRequest.HttpServerRequest }) =>
+        Effect.gen(function* () {
+          const bodyOption = yield* readBody(request);
+          if (Option.isNone(bodyOption)) return rejected(413, "body_too_large_or_unreadable");
+          const body = bodyOption.value;
+          const settings = (yield* settingsService.getSettings).linearAutopilot;
+          if (!settings.slackSigningSecret || settings.slackSigningSecret === "••••••") {
+            return rejected(503, "slack_not_configured");
+          }
+          const timestamp = request.headers["x-slack-request-timestamp"];
+          const signature = request.headers["x-slack-signature"];
+          const nowSeconds = yield* Effect.clockWith((clock) =>
+            clock.currentTimeMillis.pipe(Effect.map((now) => Math.floor(now / 1000))),
+          );
+          if (
+            !verifySlackRequestSignature({
+              timestamp,
+              signature,
+              secret: settings.slackSigningSecret,
+              body,
+              nowSeconds,
+            })
+          )
+            return rejected(401, "invalid_signature");
 
-    const slackCommandsWebhook = ({
-      request,
-    }: {
-      readonly request: HttpServerRequest.HttpServerRequest;
-    }) =>
-      Effect.gen(function* () {
-        const bodyOption = yield* readBody(request);
-        if (Option.isNone(bodyOption)) return rejected(413, "body_too_large_or_unreadable");
-        const body = bodyOption.value;
-        const settings = (yield* settingsService.getSettings).linearAutopilot;
-        if (!settings.slackSigningSecret || settings.slackSigningSecret === "••••••") {
-          return rejected(503, "slack_not_configured");
-        }
-        if (
-          !verifySlackRequestSignature({
-            timestamp: request.headers["x-slack-request-timestamp"],
-            signature: request.headers["x-slack-signature"],
-            secret: settings.slackSigningSecret,
-            body,
-            nowSeconds: yield* Effect.clockWith((clock) =>
-              clock.currentTimeMillis.pipe(Effect.map((now) => Math.floor(now / 1000))),
-            ),
-          })
-        )
-          return rejected(401, "invalid_signature");
+          const envelope = Option.getOrNull(
+            decodeSlackJsonEnvelope(new TextDecoder().decode(body)),
+          );
+          if (envelope === null) return rejected(400, "invalid_payload");
+          if (envelope.type === "url_verification" && envelope.challenge !== undefined) {
+            return HttpServerResponse.jsonUnsafe({ challenge: envelope.challenge });
+          }
+          const event = envelope.event;
+          const teamId = envelope.team_id;
+          if (
+            autopilotSourceMode(settings, "slack") !== "queue" ||
+            settings.slackProjectId === null ||
+            !settings.slackBotToken ||
+            settings.slackBotToken === "••••••" ||
+            envelope.type !== "event_callback" ||
+            event?.type !== "app_mention" ||
+            event.subtype !== undefined ||
+            teamId === undefined ||
+            !settings.slackAllowedChannelIds.includes(event.channel)
+          )
+            return accepted();
 
-        const command = parseSlackSlashCommand(new TextDecoder().decode(body));
-        if (command === null || !settings.slackAllowedChannelIds.includes(command.channelId))
-          return rejected(400, "invalid_command");
-        if (!settings.slackBotToken || settings.slackBotToken === "••••••") {
+          const text = normalizeSlackText(event.text);
+          const observedAt = DateTime.formatIso(yield* DateTime.now);
+          yield* intake.ingestTicket({
+            ticket: {
+              source: "slack",
+              sourceAccountId: `${teamId}:${event.channel}`,
+              sourceTicketId: event.ts,
+              identifier: `slack:${teamId}/${event.channel}/${event.ts}`,
+              title: ticketTitle(text),
+              url: `https://app.slack.com/client/${teamId}/${event.channel}/p${event.ts.replace(".", "")}`,
+              description: text,
+              projectId: settings.slackProjectId,
+              sourceUpdatedAt: observedAt,
+            },
+            eventId: envelope.event_id ?? null,
+            observedAt,
+          });
+          yield* postSlackMessage(settings.slackBotToken, {
+            channel: event.channel,
+            thread_ts: event.ts,
+            text: "Autopilot picked this up. I’ll post progress and approval updates in this thread.",
+          });
+          return accepted();
+        }),
+    );
+
+    const slackCommandsWebhook = Effect.fn("TicketSourceWebhookRoute.slackCommandsWebhook")(
+      ({ request }: { readonly request: HttpServerRequest.HttpServerRequest }) =>
+        Effect.gen(function* () {
+          const bodyOption = yield* readBody(request);
+          if (Option.isNone(bodyOption)) return rejected(413, "body_too_large_or_unreadable");
+          const body = bodyOption.value;
+          const settings = (yield* settingsService.getSettings).linearAutopilot;
+          if (!settings.slackSigningSecret || settings.slackSigningSecret === "••••••") {
+            return rejected(503, "slack_not_configured");
+          }
+          if (
+            !verifySlackRequestSignature({
+              timestamp: request.headers["x-slack-request-timestamp"],
+              signature: request.headers["x-slack-signature"],
+              secret: settings.slackSigningSecret,
+              body,
+              nowSeconds: yield* Effect.clockWith((clock) =>
+                clock.currentTimeMillis.pipe(Effect.map((now) => Math.floor(now / 1000))),
+              ),
+            })
+          )
+            return rejected(401, "invalid_signature");
+
+          const command = parseSlackSlashCommand(new TextDecoder().decode(body));
+          if (command === null || !settings.slackAllowedChannelIds.includes(command.channelId))
+            return rejected(400, "invalid_command");
+          if (!settings.slackBotToken || settings.slackBotToken === "••••••") {
+            return HttpServerResponse.jsonUnsafe({
+              response_type: "ephemeral",
+              text: "Slack is not connected to Autopilot yet.",
+            });
+          }
+          if (
+            autopilotSourceMode(settings, "slack") !== "queue" ||
+            settings.slackProjectId === null
+          ) {
+            return HttpServerResponse.jsonUnsafe({
+              response_type: "ephemeral",
+              text: "Autopilot is not configured to queue Slack requests yet.",
+            });
+          }
+
+          const observedAt = DateTime.formatIso(yield* DateTime.now);
+          yield* intake.ingestTicket({
+            ticket: {
+              source: "slack",
+              sourceAccountId: `${command.teamId}:${command.channelId}`,
+              sourceTicketId: `command:${command.triggerId}`,
+              identifier: `slack:${command.teamId}/${command.channelId}/${command.triggerId}`,
+              title: ticketTitle(command.text),
+              url: `https://app.slack.com/client/${command.teamId}/${command.channelId}`,
+              description: normalizeSlackText(command.text),
+              projectId: settings.slackProjectId,
+              sourceUpdatedAt: observedAt,
+            },
+            eventId: `slack-command:${command.triggerId}`,
+            observedAt,
+          });
           return HttpServerResponse.jsonUnsafe({
             response_type: "ephemeral",
-            text: "Slack is not connected to Autopilot yet.",
+            text: "Autopilot queued this request. Progress and approvals will appear in this channel.",
           });
-        }
-        if (
-          autopilotSourceMode(settings, "slack") !== "queue" ||
-          settings.slackProjectId === null
-        ) {
-          return HttpServerResponse.jsonUnsafe({
-            response_type: "ephemeral",
-            text: "Autopilot is not configured to queue Slack requests yet.",
-          });
-        }
-
-        const observedAt = DateTime.formatIso(yield* DateTime.now);
-        yield* intake.ingestTicket({
-          ticket: {
-            source: "slack",
-            sourceAccountId: `${command.teamId}:${command.channelId}`,
-            sourceTicketId: `command:${command.triggerId}`,
-            identifier: `slack:${command.teamId}/${command.channelId}/${command.triggerId}`,
-            title: ticketTitle(command.text),
-            url: `https://app.slack.com/client/${command.teamId}/${command.channelId}`,
-            description: normalizeSlackText(command.text),
-            projectId: settings.slackProjectId,
-            sourceUpdatedAt: observedAt,
-          },
-          eventId: `slack-command:${command.triggerId}`,
-          observedAt,
-        });
-        return HttpServerResponse.jsonUnsafe({
-          response_type: "ephemeral",
-          text: "Autopilot queued this request. Progress and approvals will appear in this channel.",
-        });
-      });
+        }),
+    );
 
     const safe =
       <E, R>(

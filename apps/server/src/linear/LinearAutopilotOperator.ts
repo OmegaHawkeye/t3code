@@ -97,80 +97,84 @@ const make = Effect.gen(function* () {
   const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
   const approval = yield* LinearAutopilotApproval.LinearAutopilotApproval;
 
-  const listPendingApprovals: LinearAutopilotOperator["Service"]["listPendingApprovals"] = (
-    limit,
-  ) =>
-    Effect.gen(function* () {
-      const recoverable = yield* runs.listRecoverable(limit);
-      const approvals: LinearAutopilotPendingApproval[] = [];
-      for (const run of recoverable) {
-        if (
-          run.state !== "needs_approval" ||
-          run.approvalPlanHash === null ||
-          run.approvalPolicyVersion === null ||
-          run.approvalProjectId === null ||
-          run.approvalBaseRef === null
-        )
-          continue;
+  const listPendingApprovals: LinearAutopilotOperator["Service"]["listPendingApprovals"] =
+    Effect.fn("LinearAutopilotOperator.listPendingApprovals")((limit) =>
+      Effect.gen(function* () {
+        const recoverable = yield* runs.listRecoverable(limit);
+        const approvals: LinearAutopilotPendingApproval[] = [];
+        for (const run of recoverable) {
+          if (
+            run.state !== "needs_approval" ||
+            run.approvalPlanHash === null ||
+            run.approvalPolicyVersion === null ||
+            run.approvalProjectId === null ||
+            run.approvalBaseRef === null
+          )
+            continue;
 
-        const [issue, plan, review] = yield* Effect.all([
-          intake.getIssueContext({ workspaceId: run.workspaceId, issueId: run.issueId }),
-          attempts.getLatest({ runId: run.runId, phase: "planning" }),
-          attempts.getLatest({ runId: run.runId, phase: "review" }),
-        ]);
-        if (
-          issue === null ||
-          plan === null ||
-          plan.status !== "succeeded" ||
-          plan.summary === null ||
-          review === null ||
-          review.status !== "succeeded" ||
-          review.summary === null
-        )
-          continue;
-        approvals.push({
-          runId: run.runId,
-          revision: run.revision,
-          issueId: run.issueId,
-          identifier: issue.identifier,
-          title: issue.title,
-          url: issue.url,
-          projectId: run.approvalProjectId,
-          baseRef: run.approvalBaseRef,
-          planHash: run.approvalPlanHash,
-          policyVersion: run.approvalPolicyVersion,
-          planSummary: plan.summary,
-          reviewSummary: review.summary,
-          planThreadId: plan.threadId,
-          reviewThreadId: review.threadId,
-        });
-      }
-      return approvals;
-    });
+          const [issue, plan, review] = yield* Effect.all([
+            intake.getIssueContext({ workspaceId: run.workspaceId, issueId: run.issueId }),
+            attempts.getLatest({ runId: run.runId, phase: "planning" }),
+            attempts.getLatest({ runId: run.runId, phase: "review" }),
+          ]);
+          if (
+            issue === null ||
+            plan === null ||
+            plan.status !== "succeeded" ||
+            plan.summary === null ||
+            review === null ||
+            review.status !== "succeeded" ||
+            review.summary === null
+          )
+            continue;
+          approvals.push({
+            runId: run.runId,
+            revision: run.revision,
+            issueId: run.issueId,
+            identifier: issue.identifier,
+            title: issue.title,
+            url: issue.url,
+            projectId: run.approvalProjectId,
+            baseRef: run.approvalBaseRef,
+            planHash: run.approvalPlanHash,
+            policyVersion: run.approvalPolicyVersion,
+            planSummary: plan.summary,
+            reviewSummary: review.summary,
+            planThreadId: plan.threadId,
+            reviewThreadId: review.threadId,
+          });
+        }
+        return approvals;
+      }),
+    );
 
   /** The attempt for the phase the run is in now; repair shares the verifying state. */
-  const currentAttempt = (run: LinearAutopilotRuns.LinearAutopilotRun) =>
-    Effect.gen(function* () {
-      if (run.state === "verifying") {
-        const repair = yield* attempts.getLatest({ runId: run.runId, phase: "repair" });
-        if (repair !== null && isActiveAttempt(repair)) return repair;
-      }
-      const phase =
-        run.state === "planning"
-          ? "planning"
-          : run.state === "reviewing"
-            ? "review"
-            : run.state === "implementing"
-              ? "implementation"
-              : run.state === "verifying"
-                ? "verification"
-                : run.state === "delivering"
-                  ? "delivery"
-                  : null;
-      return phase === null ? null : yield* attempts.getLatest({ runId: run.runId, phase });
-    });
+  const currentAttempt = Effect.fn("LinearAutopilotOperator.currentAttempt")(
+    (run: LinearAutopilotRuns.LinearAutopilotRun) =>
+      Effect.gen(function* () {
+        if (run.state === "verifying") {
+          const repair = yield* attempts.getLatest({ runId: run.runId, phase: "repair" });
+          if (repair !== null && isActiveAttempt(repair)) return repair;
+        }
+        const phase =
+          run.state === "planning"
+            ? "planning"
+            : run.state === "reviewing"
+              ? "review"
+              : run.state === "implementing"
+                ? "implementation"
+                : run.state === "verifying"
+                  ? "verification"
+                  : run.state === "delivering"
+                    ? "delivery"
+                    : null;
+        return phase === null ? null : yield* attempts.getLatest({ runId: run.runId, phase });
+      }),
+  );
 
-  const listRuns: LinearAutopilotOperator["Service"]["listRuns"] = (projectId, limit) =>
+  const listRuns: LinearAutopilotOperator["Service"]["listRuns"] = Effect.fn(
+    "LinearAutopilotOperator.listRuns",
+  )((projectId, limit) =>
     Effect.gen(function* () {
       const recent = yield* runs.listRecentForProject({ projectId, limit });
       return yield* Effect.forEach(recent, (run) =>
@@ -196,9 +200,12 @@ const make = Effect.gen(function* () {
           };
         }),
       );
-    });
+    }),
+  );
 
-  const cancelRun: LinearAutopilotOperator["Service"]["cancelRun"] = (input) =>
+  const cancelRun: LinearAutopilotOperator["Service"]["cancelRun"] = Effect.fn(
+    "LinearAutopilotOperator.cancelRun",
+  )((input) =>
     Effect.gen(function* () {
       const run = yield* runs.getById(input.runId);
       if (run === null || run.revision !== input.expectedRevision) return false;
@@ -233,9 +240,12 @@ const make = Effect.gen(function* () {
           );
       }
       return true;
-    });
+    }),
+  );
 
-  const restartRun: LinearAutopilotOperator["Service"]["restartRun"] = (input) =>
+  const restartRun: LinearAutopilotOperator["Service"]["restartRun"] = Effect.fn(
+    "LinearAutopilotOperator.restartRun",
+  )((input) =>
     Effect.gen(function* () {
       const run = yield* runs.getById(input.runId);
       if (run === null || run.revision !== input.expectedRevision) return null;
@@ -275,7 +285,8 @@ const make = Effect.gen(function* () {
               ),
           }),
         );
-    });
+    }),
+  );
 
   return LinearAutopilotOperator.of({
     listPendingApprovals,
