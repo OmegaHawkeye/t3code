@@ -1290,7 +1290,8 @@ describe("UsageService", () => {
           assert.strictEqual(
             summary.sources.find((source) => source.fingerprint.provider === "pi")?.fingerprint
               .resolvedHomePath,
-            dir,
+            // The service reports the directory with links resolved.
+            yield* Effect.promise(() => NodeFSP.realpath(dir)),
           );
         }).pipe(
           Effect.scoped,
