@@ -5,6 +5,7 @@ import {
   type ProjectSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Record from "effect/Record";
 import { ExternalLinkIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
@@ -632,7 +633,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                         return;
                       }
                       setProjectMappings((current) => {
-                        const { [linearProjectId]: _removed, ...rest } = current;
+                        const rest = Record.remove(current, linearProjectId);
                         return value ? { ...rest, [linearProjectId]: ProjectId.make(value) } : rest;
                       });
                     }}

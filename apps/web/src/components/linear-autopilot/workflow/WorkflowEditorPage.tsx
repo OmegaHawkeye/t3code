@@ -13,6 +13,7 @@ import {
 } from "@t3tools/shared/linearAutopilotWorkflow";
 import { Link } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
+import * as Record from "effect/Record";
 import { AlertTriangleIcon, ArrowLeftIcon, CopyIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -145,8 +146,7 @@ export function WorkflowEditorPage() {
           }
           readOnly={!writeAllowed}
           onSave={(workflow) => {
-            const { [selectedProjectId]: _previous, ...others } =
-              settings.linearAutopilot.workflows;
+            const others = Record.remove(settings.linearAutopilot.workflows, selectedProjectId);
             updateSettings({
               linearAutopilot: {
                 ...settings.linearAutopilot,
