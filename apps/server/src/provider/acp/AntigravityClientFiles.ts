@@ -42,10 +42,27 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
             Effect.orElseSucceed(() => true),
           );
           if (entryExists) return yield* outside;
-          const parent = yield* input.fileSystem
-            .realPath(path.dirname(resolved))
-            .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-          return path.join(parent, path.basename(resolved));
+          // A write may create missing directories. Resolve the nearest
+          // existing ancestor so a symlinked root (macOS /var -> /private/var)
+          // still compares against its real path.
+          let ancestor = path.dirname(resolved);
+          const missing = [path.basename(resolved)];
+          while (true) {
+            const real = yield* input.fileSystem
+              .realPath(ancestor)
+              .pipe(Effect.orElseSucceed(() => undefined));
+            if (real !== undefined) return path.join(real, ...missing);
+            const ancestorExists = yield* input.fileSystem.readLink(ancestor).pipe(
+              Effect.as(true),
+              Effect.catch(() => input.fileSystem.exists(ancestor)),
+              Effect.orElseSucceed(() => true),
+            );
+            if (ancestorExists) return yield* outside;
+            const parent = path.dirname(ancestor);
+            if (parent === ancestor) return resolved;
+            missing.unshift(path.basename(ancestor));
+            ancestor = parent;
+          }
         }),
       ),
     );

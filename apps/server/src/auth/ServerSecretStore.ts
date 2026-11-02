@@ -223,27 +223,37 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // The secret is written in full before it appears: a hard link is exclusive
+  // like `wx`, but a concurrent creator that loses never reads a partial file.
   const create: ServerSecretStore["Service"]["create"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const file = yield* fileSystem.open(secretPath, {
-          flag: "wx",
-          mode: 0o600,
-        });
-        yield* file.writeAll(value);
-        yield* file.sync;
-        yield* fileSystem.chmod(secretPath, 0o600);
-      }),
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new SecretStorePersistError({
-            resource: `secret ${name}`,
-            cause,
-          }),
-      ),
-    );
+    return crypto
+      .randomUUIDv4()
+      .pipe(
+        Effect.flatMap((uuid) => {
+          const tempPath = `${secretPath}.${uuid}.tmp`;
+          return Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fileSystem.open(tempPath, { flag: "wx", mode: 0o600 });
+              yield* file.writeAll(value);
+              yield* file.sync;
+            }),
+          ).pipe(
+            Effect.andThen(fileSystem.chmod(tempPath, 0o600)),
+            Effect.andThen(fileSystem.link(tempPath, secretPath)),
+            Effect.ensuring(fileSystem.remove(tempPath).pipe(Effect.ignore)),
+          );
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new SecretStorePersistError({
+              resource: `secret ${name}`,
+              cause,
+            }),
+        ),
+      );
   };
 
   const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>

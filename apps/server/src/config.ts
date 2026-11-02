@@ -184,10 +184,14 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
 ) {
   const devUrl = undefined;
   const fs = yield* FileSystem.FileSystem;
+  // Services report paths with links resolved, so a temp home must use its real
+  // path or it diverges on macOS, where the temp dir is under /var -> /private/var.
   const baseDir =
     typeof baseDirOrPrefix === "string"
       ? baseDirOrPrefix
-      : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
+      : yield* fs
+          .makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
   const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
   yield* ensureServerDirectories(derivedPaths);
 
