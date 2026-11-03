@@ -66,6 +66,8 @@ export class LinearAutopilotDispatcher extends Context.Service<
   }
 >()("t3/linear/LinearAutopilotDispatcher") {}
 
+const FALLBACK_BASE_BRANCHES = ["main", "master"] as const;
+
 const make = Effect.gen(function* () {
   const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
   const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
@@ -76,6 +78,19 @@ const make = Effect.gen(function* () {
   const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
   const crypto = yield* Crypto.Crypto;
   const ticketFeedback = yield* TicketSourceFeedback.TicketSourceFeedback;
+
+  // Repos created with `git init` + push have no origin/HEAD; fall back like GitVcsDriverCore.
+  const resolveBaseBranch = Effect.fn("LinearAutopilotDispatcher.resolveBaseBranch")(function* (
+    cwd: string,
+    remoteName: string,
+  ) {
+    const defaultBranch = yield* git.resolveDefaultBranchName(cwd, remoteName);
+    if (defaultBranch !== null) return defaultBranch;
+    for (const refName of FALLBACK_BASE_BRANCHES) {
+      if (yield* git.remoteBranchExists({ cwd, remoteName, refName })) return refName;
+    }
+    return null;
+  });
 
   const dispatchPending: LinearAutopilotDispatcher["Service"]["dispatchPending"] = Effect.fn(
     "LinearAutopilotDispatcher.dispatchPending",
@@ -128,9 +143,10 @@ const make = Effect.gen(function* () {
           deferred += 1;
           continue;
         }
-        const baseRefResult = yield* git
-          .resolveDefaultBranchName(project.workspaceRoot, remoteResult.success)
-          .pipe(Effect.result);
+        const baseRefResult = yield* resolveBaseBranch(
+          project.workspaceRoot,
+          remoteResult.success,
+        ).pipe(Effect.result);
         if (baseRefResult._tag === "Failure" || baseRefResult.success === null) {
           deferred += 1;
           continue;
