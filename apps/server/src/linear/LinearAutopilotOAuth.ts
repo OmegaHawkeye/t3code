@@ -33,6 +33,7 @@ const TokenResponse = Schema.Struct({
   expires_in: Schema.Int.check(Schema.isGreaterThan(0)),
   scope: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
 });
+const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
 const StoredToken = Schema.Struct({
   accessToken: Schema.String,
   refreshToken: Schema.String,
@@ -159,11 +160,23 @@ const make = Effect.gen(function* () {
       Effect.flatMap(
         HttpClientResponse.matchStatus({
           "2xx": (response) =>
-            HttpClientResponse.schemaBodyJson(TokenResponse)(response).pipe(
-              Effect.tapError((cause) =>
-                Effect.logWarning("Linear token response did not match the expected shape", {
-                  issue: String(cause).slice(0, 500),
-                }),
+            response.json.pipe(
+              Effect.flatMap((body) =>
+                decodeTokenResponse(body).pipe(
+                  Effect.tapError(() =>
+                    Effect.logWarning("Linear token response did not match the expected shape", {
+                      fieldTypes:
+                        body && typeof body === "object"
+                          ? Object.fromEntries(
+                              Object.entries(body).map(([key, value]) => [
+                                key,
+                                Array.isArray(value) ? "array" : typeof value,
+                              ]),
+                            )
+                          : typeof body,
+                    }),
+                  ),
+                ),
               ),
               Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "exchange" })),
             ),
