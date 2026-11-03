@@ -2,6 +2,7 @@ import { autopilotSourceMode, ProjectId, type ProjectSnapshot } from "@t3tools/c
 import * as Effect from "effect/Effect";
 import { ExternalLinkIcon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSearch } from "@tanstack/react-router";
 
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
@@ -92,9 +93,9 @@ export function AutopilotIntegrationSettingsPanel({
   const [slackClientId, setSlackClientId] = useState("");
   const [slackClientSecret, setSlackClientSecret] = useState("");
   const [slackOAuthBusy, setSlackOAuthBusy] = useState(false);
+  const oauthResult = useSearch({ strict: false, select: (search) => search.slackOAuth });
   const [slackOAuthNotice, setSlackOAuthNotice] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    const result = new URLSearchParams(window.location.search).get("slackOAuth");
+    const result = oauthResult;
     if (result === "connected") return "Slack workspace connected.";
     if (result === "denied") return "Slack authorization was cancelled.";
     if (result === "failed")

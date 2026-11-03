@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Record from "effect/Record";
 import { ExternalLinkIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
+import { useSearch } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -165,9 +166,9 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [oauthStatusLoaded, setOauthStatusLoaded] = useState(false);
   const [serverClientIdConfigured, setServerClientIdConfigured] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
+  const oauthResult = useSearch({ strict: false, select: (search) => search.linearOAuth });
   const [oauthNotice, setOauthNotice] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    const result = new URLSearchParams(window.location.search).get("linearOAuth");
+    const result = oauthResult;
     if (result === "connected") return "Linear workspace connected.";
     if (result === "denied") return "Linear authorization was cancelled.";
     if (result === "failed") return "Linear authorization failed. Please try again.";
