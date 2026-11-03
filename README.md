@@ -101,6 +101,14 @@ We are very very early in this project. Expect bugs.
 
 We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
 
+## Why "Tiphys"?
+
+This fork's desktop app is called **Tiphys**. In Greek myth, Tiphys was the helmsman of the Argo, the ship that carried Jason and the Argonauts. He steered them through waters no one else could cross.
+
+The name fits how the app works. Most of the time you hold the wheel and drive your coding agents yourself. When you want, you hand it to Tiphys: Autopilot takes tickets, plans, implements and opens pull requests in the background, and stops for your approval before it changes anything.
+
+The name replaces "Larl" (Local Agent Runner for Linear). The fork no longer takes tickets only from Linear, and the app is no longer just a runner.
+
 ## OmegaHawkeye fork roadmap
 
 This fork is being extended to bring the most important parts of the [Larl](https://github.com/OmegaHawkeye/local-linear-agent-runner) ticket automation into the T3 Code server. These are fork-specific changes and are not part of upstream T3 Code. The work is staged so the server can own intake, workflow state, approvals, and recovery while T3 Code provides agent execution, worktrees, and the operator interface.

@@ -78,6 +78,7 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+import { BUILD_DESKTOP_FLAVOR } from "./app/DesktopFlavor.ts";
 
 if (process.argv.includes("--version")) {
   try {
@@ -101,6 +102,7 @@ const layerDesktopEnvironment = Layer.unwrap(
       platform,
       processArch,
       ...metadata,
+      flavor: BUILD_DESKTOP_FLAVOR,
     });
   }),
 );

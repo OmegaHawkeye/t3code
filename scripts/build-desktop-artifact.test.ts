@@ -20,6 +20,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { resolveDesktopFlavor } from "@t3tools/shared/desktopFlavor";
+
 import {
   buildDesktopBundles,
   copyDesktopBuildArtifacts,
@@ -541,6 +543,39 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.provide(
         ConfigProvider.layer(
           ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("gives a flavor build its own identity and never bakes in an update feed", () =>
+    Effect.gen(function* () {
+      const flavored = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "arm64",
+        resolveDesktopFlavor("tiphys"),
+      );
+
+      assert.equal(flavored.appId, "com.omegahawkeye.tiphys");
+      assert.equal(flavored.productName, "Tiphys");
+      assert.equal(flavored.artifactName, "Tiphys-${version}-${arch}.${ext}");
+      assert.isNull(flavored.publish);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              GITHUB_REPOSITORY: "pingdotgg/t3code",
+              T3CODE_DESKTOP_UPDATE_REPOSITORY: "pingdotgg/t3code",
+            },
+          }),
         ),
       ),
     ),
@@ -1648,6 +1683,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
             wslRuntime: Option.none(),
+            flavor: Option.none(),
           }),
         );
 
@@ -1672,6 +1708,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
         wslRuntime: Option.none(),
+        flavor: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(

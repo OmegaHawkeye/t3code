@@ -72,4 +72,54 @@ describe("DesktopEnvironment", () => {
       assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
     }),
   );
+
+  it.effect("gives the Tiphys flavor its own name, ids and data folders", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({ flavor: "tiphys" });
+
+      assert.equal(environment.flavor?.id, "tiphys");
+      assert.equal(environment.displayName, "Tiphys");
+      assert.equal(environment.branding.displayName, "Tiphys");
+      assert.equal(environment.appUserModelId, "com.omegahawkeye.tiphys");
+      assert.equal(environment.baseDir, "/Users/alice/.tiphys");
+      assert.equal(environment.stateDir, "/Users/alice/.tiphys/userdata");
+    }),
+  );
+
+  it.effect("lets T3CODE_HOME override the flavor's default data folder", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { flavor: "tiphys" },
+        { T3CODE_HOME: "/data/tiphys-home" },
+      );
+
+      assert.equal(environment.baseDir, "/data/tiphys-home");
+    }),
+  );
+
+  it.effect.each([
+    { name: "no flavor", overrides: {} },
+    { name: "an unknown flavor", overrides: { flavor: "acme" } },
+  ])("keeps upstream identity with $name", ({ overrides }) =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(overrides);
+
+      assert.isNull(environment.flavor);
+      assert.equal(environment.displayName, "T3 Code (Beta)");
+      assert.equal(environment.appUserModelId, "com.t3tools.t3code");
+      assert.equal(environment.baseDir, "/Users/alice/.t3");
+    }),
+  );
+
+  it.effect("ignores the flavor in development", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { flavor: "tiphys" },
+        { VITE_DEV_SERVER_URL: "http://localhost:5173" },
+      );
+
+      assert.isNull(environment.flavor);
+      assert.equal(environment.stateDir, "/Users/alice/.t3/dev");
+    }),
+  );
 });

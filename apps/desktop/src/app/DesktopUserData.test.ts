@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { resolveDesktopFlavor } from "./DesktopFlavor.ts";
 import { resolveUserDataPath } from "./DesktopUserData.ts";
 
 it.effect.each(["t3code", "T3 Code (Alpha)"])(
@@ -39,4 +40,19 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
         "existing V2 state",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("uses the flavor's own Electron profile folder", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-flavor-profile-" });
+    const resolved = yield* resolveUserDataPath({
+      appDataDirectory: directory,
+      isDevelopment: false,
+      platform: "darwin",
+      flavor: resolveDesktopFlavor("tiphys"),
+    });
+    assert.equal(resolved, path.join(directory, "tiphys"));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
