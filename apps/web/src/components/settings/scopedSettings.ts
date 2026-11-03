@@ -412,8 +412,12 @@ export function planProjectOverridesClear(
   };
 }
 
+const SECRET_REDACTED = "•".repeat(6);
+
 function writeWasDropped(value: unknown, before: unknown, saved: unknown): boolean {
   if (value === null) return before != null && Equal.equals(saved, before);
+  // A replaced secret comes back as the same redaction marker, so it cannot be compared.
+  if (typeof value === "string" && value.trim() !== "" && saved === SECRET_REDACTED) return false;
   if (isPlainObject(value) && !Array.isArray(before) && !Array.isArray(saved)) {
     const field = (source: unknown, key: string) =>
       isPlainObject(source) ? source[key] : undefined;
