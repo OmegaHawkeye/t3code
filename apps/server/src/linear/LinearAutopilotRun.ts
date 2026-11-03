@@ -17,6 +17,13 @@ export interface LinearAutopilotRunSession {
     | LinearAutopilotClient.LinearAutopilotClientError
     | LinearAutopilotToken.LinearAutopilotTokenError
   >;
+  readonly getIssue: (input: {
+    readonly issueId: string;
+  }) => Effect.Effect<
+    LinearAutopilotClient.LinearAutopilotIssue | null,
+    | LinearAutopilotClient.LinearAutopilotClientError
+    | LinearAutopilotToken.LinearAutopilotTokenError
+  >;
   readonly updateIssueState: (input: {
     readonly issueId: string;
     readonly stateId: string;
@@ -76,6 +83,17 @@ const make = Effect.gen(function* () {
               ),
             );
 
+          const getIssue: LinearAutopilotRunSession["getIssue"] = (input) =>
+            Ref.get(tokenRef).pipe(
+              Effect.flatMap((accessToken) => client.getIssue({ accessToken, ...input })),
+              Effect.catchIf(isUnauthorized, () =>
+                tokenProvider.mint({ forceRefresh: true }).pipe(
+                  Effect.tap((replacementToken) => Ref.set(tokenRef, replacementToken)),
+                  Effect.flatMap((accessToken) => client.getIssue({ accessToken, ...input })),
+                ),
+              ),
+            );
+
           const updateIssueState: LinearAutopilotRunSession["updateIssueState"] = (input) =>
             Ref.get(tokenRef).pipe(
               Effect.flatMap((accessToken) => client.updateIssueState({ accessToken, ...input })),
@@ -89,7 +107,7 @@ const make = Effect.gen(function* () {
               ),
             );
 
-          return { listIssuesPage, updateIssueState };
+          return { listIssuesPage, getIssue, updateIssueState };
         }),
       ),
     );

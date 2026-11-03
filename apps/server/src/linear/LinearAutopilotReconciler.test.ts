@@ -114,6 +114,7 @@ const harness = (
       begin: () =>
         Effect.succeed({
           listIssuesPage: () => Effect.die("Unexpected issue poll"),
+          getIssue: () => Effect.die("Unexpected issue lookup"),
           updateIssueState: (input) =>
             Effect.sync(() => linearUpdates.push(input)).pipe(Effect.asVoid),
         }),

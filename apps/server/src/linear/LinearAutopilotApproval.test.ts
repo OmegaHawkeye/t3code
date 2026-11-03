@@ -29,6 +29,7 @@ const harness = () => {
         begin: () =>
           Effect.succeed({
             listIssuesPage: () => Effect.die("Unexpected issue-list request"),
+            getIssue: () => Effect.die("Unexpected issue lookup"),
             updateIssueState: (input) => Effect.sync(() => updates.push(input)).pipe(Effect.asVoid),
           }),
       }),

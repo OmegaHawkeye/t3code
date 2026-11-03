@@ -20,12 +20,16 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as LinearAutopilotPhaseLaunch from "./LinearAutopilotPhaseLaunch.ts";
 import * as LinearAutopilotWorkflow from "./LinearAutopilotWorkflow.ts";
+import * as LinearAutopilotIntakePolicy from "./LinearAutopilotIntakePolicy.ts";
+import * as LinearAutopilotRun from "./LinearAutopilotRun.ts";
 import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
 
 export interface LinearAutopilotDispatchResult {
   readonly candidates: number;
   readonly launched: number;
   readonly deferred: number;
+  /** Linear entries dropped because the ticket no longer matches the current intake config. */
+  readonly discarded: number;
 }
 
 export interface LinearAutopilotImplementationDispatchResult {
@@ -78,6 +82,31 @@ const make = Effect.gen(function* () {
   const attempts = yield* LinearAutopilotPhaseAttempts.LinearAutopilotPhaseAttemptRepository;
   const crypto = yield* Crypto.Crypto;
   const ticketFeedback = yield* TicketSourceFeedback.TicketSourceFeedback;
+  const linearRun = yield* LinearAutopilotRun.LinearAutopilotRun;
+
+  // Intake checked the ticket when it was queued; config and ticket may both have changed since.
+  const recheckLinearCandidate = Effect.fn("LinearAutopilotDispatcher.recheckLinearCandidate")(
+    function* (
+      session: LinearAutopilotRun.LinearAutopilotRunSession,
+      config: LinearAutopilotIntakePolicy.LinearAutopilotIntakeConfig,
+      candidate: { readonly issueId: string; readonly projectId: string | null },
+    ) {
+      const issue = yield* session.getIssue({ issueId: candidate.issueId }).pipe(Effect.result);
+      if (issue._tag === "Failure") return { _tag: "unreachable" } as const;
+      if (issue.success === null) return { _tag: "stale", reason: "issue-not-found" } as const;
+      const decision = LinearAutopilotIntakePolicy.evaluateLinearAutopilotIntake(config, {
+        teamId: issue.success.team.id,
+        stateId: issue.success.state.id,
+        labelIds: issue.success.labels.nodes.map(({ id }) => id),
+        projectId: issue.success.project?.id ?? null,
+      });
+      if (!decision.eligible) return { _tag: "stale", reason: decision.reason } as const;
+      if (decision.projectId !== candidate.projectId) {
+        return { _tag: "stale", reason: "project-mapping-changed" } as const;
+      }
+      return { _tag: "eligible" } as const;
+    },
+  );
 
   // Repos created with `git init` + push have no origin/HEAD; fall back like GitVcsDriverCore.
   const resolveBaseBranch = Effect.fn("LinearAutopilotDispatcher.resolveBaseBranch")(function* (
@@ -100,14 +129,44 @@ const make = Effect.gen(function* () {
       const currentSettings = yield* settings.getSettings;
       let launched = 0;
       let deferred = 0;
+      let discarded = 0;
+      let linearSession: Option.Option<LinearAutopilotRun.LinearAutopilotRunSession> | undefined;
 
       for (const candidate of pending) {
+        const isRestart = LinearAutopilotIntake.isRestartOutboxId(candidate.outboxId);
         if (
-          !LinearAutopilotIntake.isRestartOutboxId(candidate.outboxId) &&
+          !isRestart &&
           autopilotSourceMode(currentSettings.linearAutopilot, candidate.source) !== "queue"
         ) {
           deferred += 1;
           continue;
+        }
+        if (!isRestart && candidate.source === "linear") {
+          linearSession ??= yield* linearRun
+            .begin({ teamId: currentSettings.linearAutopilot.teamId })
+            .pipe(Effect.option);
+          if (Option.isNone(linearSession)) {
+            deferred += 1;
+            continue;
+          }
+          const check = yield* recheckLinearCandidate(
+            linearSession.value,
+            currentSettings.linearAutopilot,
+            candidate,
+          );
+          if (check._tag === "unreachable") {
+            deferred += 1;
+            continue;
+          }
+          if (check._tag === "stale") {
+            yield* Effect.logInfo("Linear autopilot discarded a stale queue entry", {
+              identifier: candidate.identifier,
+              reason: check.reason,
+            });
+            yield* intake.markDispatched(candidate.outboxId, yield* DateTime.now);
+            discarded += 1;
+            continue;
+          }
         }
         if (candidate.projectId === null) {
           deferred += 1;
@@ -228,7 +287,7 @@ const make = Effect.gen(function* () {
         launched += 1;
       }
 
-      return { candidates: pending.length, launched, deferred };
+      return { candidates: pending.length, launched, deferred, discarded };
     }),
   );
 

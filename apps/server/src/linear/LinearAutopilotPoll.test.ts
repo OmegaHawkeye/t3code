@@ -51,6 +51,7 @@ const harness = (pageFactory: (page: number) => LinearAutopilotClient.LinearAuto
               requests.push({ updatedSince: input.updatedSince, after: input.after });
               return Effect.succeed(pageFactory(++pages));
             },
+            getIssue: () => Effect.die("Unexpected issue lookup"),
             updateIssueState: () => Effect.void,
           }),
       }),

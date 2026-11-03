@@ -42,6 +42,7 @@ const GraphqlResponse = Schema.Struct({
     Schema.NullOr(
       Schema.Struct({
         issues: Schema.optional(IssuePage),
+        issue: Schema.optional(Schema.NullOr(LinearAutopilotIssue)),
         teams: Schema.optional(
           Schema.Struct({
             nodes: Schema.Array(
@@ -136,6 +137,11 @@ export class LinearAutopilotClient extends Context.Service<
       readonly accessToken: string;
       readonly teamId?: string;
     }) => Effect.Effect<LinearAutopilotCatalog, LinearAutopilotClientError>;
+    /** Reads one issue's current intake facts; null when it no longer exists. */
+    readonly getIssue: (input: {
+      readonly accessToken: string;
+      readonly issueId: string;
+    }) => Effect.Effect<LinearAutopilotIssue | null, LinearAutopilotClientError>;
     /** Moves one configured issue to a configured state; callers choose the state ID. */
     readonly updateIssueState: (input: {
       readonly accessToken: string;
@@ -160,6 +166,21 @@ const issueQuery = `query LinearAutopilotIntakeIssues($teamId: ID!, $updatedSinc
       project { id }
     }
     pageInfo { endCursor hasNextPage }
+  }
+}`;
+
+const singleIssueQuery = `query LinearAutopilotIssue($issueId: String!) {
+  issue(id: $issueId) {
+    id
+    identifier
+    title
+    description
+    url
+    updatedAt
+    team { id }
+    state { id }
+    labels(first: 100) { nodes { id } }
+    project { id }
   }
 }`;
 
@@ -309,6 +330,28 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const getIssue: LinearAutopilotClient["Service"]["getIssue"] = Effect.fn(
+    "LinearAutopilotClient.getIssue",
+  )(
+    function* ({ accessToken, issueId }) {
+      const response = yield* executeGraphql(accessToken, singleIssueQuery, { issueId });
+      if (response.errors && response.errors.length > 0) {
+        return yield* new LinearAutopilotClientError({
+          reason: "graphql",
+          errorCount: response.errors.length,
+        });
+      }
+      const issue = response.data?.issue;
+      if (issue === undefined)
+        return yield* new LinearAutopilotClientError({ reason: "missing-data" });
+      return issue;
+    },
+    Effect.timeout(REQUEST_TIMEOUT),
+    Effect.catchTags({
+      TimeoutError: () => Effect.fail(new LinearAutopilotClientError({ reason: "request" })),
+    }),
+  );
+
   const updateIssueState: LinearAutopilotClient["Service"]["updateIssueState"] = (input) =>
     HttpClientRequest.post(LINEAR_GRAPHQL_URL).pipe(
       HttpClientRequest.bearerToken(input.accessToken),
@@ -351,7 +394,7 @@ const make = Effect.gen(function* () {
       Effect.withSpan("LinearAutopilotClient.updateIssueState"),
     );
 
-  return LinearAutopilotClient.of({ listIssues, listCatalog, updateIssueState });
+  return LinearAutopilotClient.of({ listIssues, listCatalog, getIssue, updateIssueState });
 });
 
 export const layer = Layer.effect(LinearAutopilotClient, make);

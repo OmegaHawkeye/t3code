@@ -21,6 +21,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as LinearAutopilotPhaseLaunch from "./LinearAutopilotPhaseLaunch.ts";
 import * as LinearAutopilotDispatcher from "./LinearAutopilotDispatcher.ts";
+import * as LinearAutopilotClient from "./LinearAutopilotClient.ts";
+import * as LinearAutopilotRun from "./LinearAutopilotRun.ts";
 import * as TicketSourceFeedback from "../autopilot/TicketSourceFeedback.ts";
 
 const now = DateTime.makeUnsafe("2026-10-19T11:00:00.000Z");
@@ -45,9 +47,30 @@ const project = {
   deletedAt: null,
 } satisfies Project;
 
+const eligibleIssue = (issueId: string): LinearAutopilotClient.LinearAutopilotIssue => ({
+  id: issueId,
+  identifier: "OME-223",
+  title: "Linear autopilot",
+  description: null,
+  url: "https://linear.app/ome/issue/OME-223",
+  updatedAt: now,
+  team: { id: "workspace-1" },
+  state: { id: "state-ready" },
+  labels: { nodes: [{ id: "label-agent" }] },
+  project: { id: "linear-project" },
+});
+
+type CurrentIssue = (
+  issueId: string,
+) => Effect.Effect<
+  LinearAutopilotClient.LinearAutopilotIssue | null,
+  LinearAutopilotClient.LinearAutopilotClientError
+>;
+
 const harness = (
   projectDefaultModelSelection: ModelSelection | null = modelSelection,
   intakeMode: "disabled" | "shadow" | "queue" = "queue",
+  currentIssue: CurrentIssue = (issueId) => Effect.succeed(eligibleIssue(issueId)),
   git: {
     readonly defaultBranch: string | null;
     readonly remoteBranches: ReadonlyArray<string>;
@@ -64,7 +87,23 @@ const harness = (
       TicketSourceFeedback.TicketSourceFeedback,
       TicketSourceFeedback.TicketSourceFeedback.of({ update: () => Effect.void }),
     ),
-    ServerSettings.ServerSettingsService.layerTest({ linearAutopilot: { mode: intakeMode } }),
+    ServerSettings.ServerSettingsService.layerTest({
+      linearAutopilot: {
+        mode: intakeMode,
+        teamId: "workspace-1",
+        readyStateIds: ["state-ready"],
+        triggerLabelIds: ["label-agent"],
+        projectMappings: { "linear-project": projectId },
+      },
+    }),
+    Layer.mock(LinearAutopilotRun.LinearAutopilotRun)({
+      begin: () =>
+        Effect.succeed({
+          listIssuesPage: () => Effect.die("Unexpected issue listing"),
+          getIssue: ({ issueId }) => currentIssue(issueId),
+          updateIssueState: () => Effect.die("Unexpected state update"),
+        }),
+    }),
     Layer.mock(ProjectService.ProjectService)({
       getById: () =>
         Effect.succeedSome({ ...project, defaultModelSelection: projectDefaultModelSelection }),
@@ -230,6 +269,7 @@ it.effect("launches planning once from the durable eligible outbox", () => {
       candidates: 1,
       launched: 1,
       deferred: 0,
+      discarded: 0,
     });
     assert.deepStrictEqual(yield* intake.listPending(10), []);
     const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
@@ -252,12 +292,13 @@ it.effect("launches planning once from the durable eligible outbox", () => {
       candidates: 0,
       launched: 0,
       deferred: 0,
+      discarded: 0,
     });
   }).pipe(Effect.provide(setup.layer));
 });
 
 it.effect("falls back to the remote main or master branch when origin/HEAD is not set", () => {
-  const setup = harness(modelSelection, "queue", {
+  const setup = harness(modelSelection, "queue", undefined, {
     defaultBranch: null,
     remoteBranches: ["master"],
   });
@@ -281,8 +322,79 @@ it.effect("falls back to the remote main or master branch when origin/HEAD is no
       candidates: 1,
       launched: 1,
       deferred: 0,
+      discarded: 0,
     });
     assert.equal(setup.launches[0]?.baseRef, "master");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+const ingestPending = Effect.gen(function* () {
+  const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+  yield* intake.ingest({
+    eventId: null,
+    workspaceId: "workspace-1",
+    issueId: "issue-1",
+    identifier: "OME-223",
+    title: "Linear autopilot",
+    url: "https://linear.app/ome/issue/OME-223",
+    description: "Implement the plan",
+    projectId,
+    sourceUpdatedAt: DateTime.formatIso(now),
+    observedAt: DateTime.formatIso(now),
+  });
+  return intake;
+});
+
+it.effect(
+  "discards a pending entry whose ticket no longer matches the current intake config",
+  () => {
+    const setup = harness(modelSelection, "queue", (issueId) =>
+      Effect.succeed({ ...eligibleIssue(issueId), state: { id: "state-backlog" } }),
+    );
+    return Effect.gen(function* () {
+      const intake = yield* ingestPending;
+      const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
+      assert.deepStrictEqual(yield* dispatcher.dispatchPending(10), {
+        candidates: 1,
+        launched: 0,
+        deferred: 0,
+        discarded: 1,
+      });
+      assert.deepStrictEqual(setup.launches, []);
+      assert.deepStrictEqual(yield* intake.listPending(10), []);
+    }).pipe(Effect.provide(setup.layer));
+  },
+);
+
+it.effect("discards a pending entry whose ticket was deleted", () => {
+  const setup = harness(modelSelection, "queue", () => Effect.succeed(null));
+  return Effect.gen(function* () {
+    const intake = yield* ingestPending;
+    const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
+    assert.deepStrictEqual(yield* dispatcher.dispatchPending(10), {
+      candidates: 1,
+      launched: 0,
+      deferred: 0,
+      discarded: 1,
+    });
+    assert.deepStrictEqual(yield* intake.listPending(10), []);
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("keeps a pending entry queued when Linear cannot be reached", () => {
+  const setup = harness(modelSelection, "queue", () =>
+    Effect.fail(new LinearAutopilotClient.LinearAutopilotClientError({ reason: "request" })),
+  );
+  return Effect.gen(function* () {
+    const intake = yield* ingestPending;
+    const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
+    assert.deepStrictEqual(yield* dispatcher.dispatchPending(10), {
+      candidates: 1,
+      launched: 0,
+      deferred: 1,
+      discarded: 0,
+    });
+    assert.strictEqual((yield* intake.listPending(10)).length, 1);
   }).pipe(Effect.provide(setup.layer));
 });
 
@@ -312,6 +424,7 @@ it.effect("holds intake entries while their source is not in queue mode", () => 
       candidates: 1,
       launched: 0,
       deferred: 1,
+      discarded: 0,
     });
     assert.equal((yield* intake.listPending(10)).length, 1);
     assert.deepStrictEqual(setup.launches, []);
@@ -337,6 +450,7 @@ it.effect("dispatches a human restart while intake is off", () => {
       candidates: 1,
       launched: 1,
       deferred: 0,
+      discarded: 0,
     });
     assert.equal(setup.launches.length, 1);
   }).pipe(Effect.provide(setup.layer));
@@ -364,6 +478,7 @@ it.effect("keeps a queue entry pending when no model is configured", () => {
       candidates: 1,
       launched: 0,
       deferred: 1,
+      discarded: 0,
     });
     assert.equal((yield* intake.listPending(10)).length, 1);
     assert.deepStrictEqual(setup.launches, []);
