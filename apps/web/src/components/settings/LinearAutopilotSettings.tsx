@@ -29,7 +29,7 @@ import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpCli
 import { runPrimaryHttp } from "../../lib/runtime";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { usePrimaryEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { resolveLinearOAuthStart } from "./linearAutopilotCallback.ts";
 import {
   useScopedSettings,
@@ -39,6 +39,7 @@ import {
 import { cn } from "../../lib/utils";
 import {
   AutopilotChipSelect,
+  AutopilotIntegrationSettingsLoading,
   AutopilotIntakeModePicker,
   AutopilotSetupStep,
   AutopilotSourcesLayout,
@@ -133,7 +134,16 @@ async function fetchAutopilotCatalog(teamId?: string) {
 }
 
 export function LinearAutopilotSettingsPanel() {
+  const primaryEnvironment = usePrimaryEnvironment();
   const settings = useScopedSettings((value) => value.linearAutopilot);
+  if (
+    primaryEnvironment !== null &&
+    primaryEnvironment.serverConfig === null &&
+    (primaryEnvironment.connection.phase === "connecting" ||
+      primaryEnvironment.connection.phase === "reconnecting")
+  ) {
+    return <AutopilotIntegrationSettingsLoading />;
+  }
   return <LinearAutopilotSettingsForm key={JSON.stringify(settings)} settings={settings} />;
 }
 

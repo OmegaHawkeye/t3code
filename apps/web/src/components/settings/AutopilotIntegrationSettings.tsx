@@ -6,10 +6,12 @@ import { useSearch } from "@tanstack/react-router";
 
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
   AutopilotIntakeModePicker,
+  AutopilotIntegrationSettingsLoading,
   AutopilotSetupStep,
   AutopilotSourcesLayout,
 } from "./AutopilotSetup";
@@ -75,6 +77,23 @@ export function AutopilotIntegrationSettingsPanel({
 }: {
   readonly integration: "github" | "slack";
 }) {
+  const primaryEnvironment = usePrimaryEnvironment();
+  if (
+    primaryEnvironment !== null &&
+    primaryEnvironment.serverConfig === null &&
+    (primaryEnvironment.connection.phase === "connecting" ||
+      primaryEnvironment.connection.phase === "reconnecting")
+  ) {
+    return <AutopilotIntegrationSettingsLoading />;
+  }
+  return <AutopilotIntegrationSettingsForm integration={integration} />;
+}
+
+function AutopilotIntegrationSettingsForm({
+  integration,
+}: {
+  readonly integration: "github" | "slack";
+}) {
   const settings = useScopedSettings((value) => value.linearAutopilot);
   const updateSettings = useUpdateScopedSettings();
   const writeAllowed = useScopedSettingsWriteAllowed();
@@ -134,7 +153,6 @@ export function AutopilotIntegrationSettingsPanel({
     typeof window === "undefined" || !secureWebhookOrigin
       ? undefined
       : slackAppConfigurationUrl(window.location.origin);
-
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the project list from the server once on mount.
   useEffect(() => {
     let cancelled = false;
