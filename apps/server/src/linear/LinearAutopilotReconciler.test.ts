@@ -78,6 +78,7 @@ const harness = (
                     updatedAt: now,
                   },
                 ],
+                turnItems: [],
               } as never)
             : Effect.die("Unexpected transcript read"),
     }),
@@ -468,6 +469,41 @@ it.effect("moves provider permission requests to Needs Human Approval in Linear"
     ]);
   }).pipe(Effect.provide(setup.layer));
 });
+
+it.effect.each([
+  { state: "planning", phase: "planning" },
+  { state: "reviewing", phase: "review" },
+] as const)(
+  "moves a provider permission request during $phase to Needs Human Approval",
+  ({ state, phase }) => {
+    const setup = harness({
+      projection: {
+        thread: { modelSelection: plannerModel },
+        runs: [{ ordinal: 1, status: "running", id: `${phase}-provider-run` }],
+        messages: [],
+        turnItems: [
+          {
+            type: "approval_request",
+            id: "permission-request",
+            status: "waiting",
+            requestId: "provider-request",
+            requestKind: "command",
+          },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      const runId = yield* seedRun(state);
+      if (phase === "review") yield* seedAttempt(runId, "planning", "Implementation plan");
+      yield* seedRunningAttempt(runId, phase);
+      const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+      yield* reconciler.reconcile();
+      assert.deepStrictEqual(setup.linearUpdates, [
+        { issueId: "issue-1", stateId: "approval-state-1" },
+      ]);
+    }).pipe(Effect.provide(setup.layer));
+  },
+);
 
 it.effect("launches verification as a follow-up in the implementation thread", () => {
   const setup = harness({

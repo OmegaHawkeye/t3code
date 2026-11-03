@@ -261,7 +261,9 @@ const make = Effect.gen(function* () {
           const projection = projectionResult.success;
           const projectionRun = latestRun(projection.runs);
           if (
-            (run.state === "implementing" ||
+            (run.state === "planning" ||
+              run.state === "reviewing" ||
+              run.state === "implementing" ||
               run.state === "verifying" ||
               run.state === "delivering") &&
             projection.turnItems.some(
