@@ -804,6 +804,9 @@ class EnvironmentLinearAutopilotHttpApi extends HttpApiGroup.make("linearAutopil
         clientId: Schema.optionalKey(
           Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)),
         ),
+        clientSecret: Schema.optionalKey(
+          Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(512)),
+        ),
       }),
       success: LinearAutopilotOAuthStartResult,
       error: [EnvironmentAuthInvalidError, EnvironmentScopeRequiredError, EnvironmentInternalError],

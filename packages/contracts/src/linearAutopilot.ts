@@ -48,6 +48,7 @@ export const LinearAutopilotOAuthStartResult = Schema.Struct({
 export const LinearAutopilotOAuthStatus = Schema.Struct({
   connected: Schema.Boolean,
   clientIdConfigured: Schema.Boolean,
+  clientSecretConfigured: Schema.optionalKey(Schema.Boolean),
   redirectUri: Schema.String,
 });
 export const LinearAutopilotOAuthDisconnectResult = Schema.Struct({ disconnected: Schema.Boolean });

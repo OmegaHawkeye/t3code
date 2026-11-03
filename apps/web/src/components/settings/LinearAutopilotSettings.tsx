@@ -72,6 +72,7 @@ async function fetchAutopilotCatalog(teamId?: string) {
         error: null,
         redirectUri: status.redirectUri,
         clientIdConfigured: status.clientIdConfigured,
+        clientSecretConfigured: status.clientSecretConfigured ?? false,
       };
     }
     let catalog: LinearAutopilotCatalog;
@@ -92,6 +93,7 @@ async function fetchAutopilotCatalog(teamId?: string) {
           "Linear is connected, but its workspace options could not be loaded. Retry; if the problem persists, reconnect Linear.",
         redirectUri: status.redirectUri,
         clientIdConfigured: status.clientIdConfigured,
+        clientSecretConfigured: status.clientSecretConfigured ?? false,
       };
     }
     try {
@@ -107,6 +109,7 @@ async function fetchAutopilotCatalog(teamId?: string) {
         error: null,
         redirectUri: status.redirectUri,
         clientIdConfigured: status.clientIdConfigured,
+        clientSecretConfigured: status.clientSecretConfigured ?? false,
       };
     } catch {
       return {
@@ -116,6 +119,7 @@ async function fetchAutopilotCatalog(teamId?: string) {
         error: "Linear is connected, but T3 project options could not be loaded.",
         redirectUri: status.redirectUri,
         clientIdConfigured: status.clientIdConfigured,
+        clientSecretConfigured: status.clientSecretConfigured ?? false,
       };
     }
   } catch {
@@ -157,6 +161,9 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const [createProjectError, setCreateProjectError] = useState<string | null>(null);
   const [clientId, setClientId] = useState("");
   const [clearClientId, setClearClientId] = useState(false);
+  const [clientSecret, setClientSecret] = useState("");
+  const [clearClientSecret, setClearClientSecret] = useState(false);
+  const [serverClientSecretConfigured, setServerClientSecretConfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<LinearAutopilotCatalog | null>(null);
   const [linearConnected, setLinearConnected] = useState(false);
@@ -176,6 +183,8 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   });
   const savedClientIdConfigured = settings.clientId === REDACTED_SECRET;
   const clientIdConfigured = savedClientIdConfigured || serverClientIdConfigured;
+  const clientSecretConfigured =
+    settings.clientSecret === REDACTED_SECRET || serverClientSecretConfigured;
   const [loadingCatalog, setLoadingCatalog] = useState(savedClientIdConfigured);
 
   const applyCatalogResult = useEffectEvent(
@@ -186,6 +195,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
       setCatalogError(result.error);
       setRedirectUri(result.redirectUri ?? null);
       setServerClientIdConfigured(result.clientIdConfigured ?? false);
+      setServerClientSecretConfigured(result.clientSecretConfigured ?? false);
       setLoadingCatalog(false);
       setOauthStatusLoaded(true);
       const states = result.catalog?.teams.find((team) => team.id === teamId)?.states;
@@ -223,8 +233,13 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
 
   const connectLinear = async () => {
     const unsavedClientId = clientId.trim();
+    const unsavedClientSecret = clientSecret.trim();
     if (!clientIdConfigured && !unsavedClientId) {
       setCatalogError("Enter the Linear OAuth app Client ID above before signing in.");
+      return;
+    }
+    if ((!clientSecretConfigured || clearClientSecret) && !unsavedClientSecret) {
+      setCatalogError("Enter the Linear OAuth app Client secret above before signing in.");
       return;
     }
     setOauthBusy(true);
@@ -235,7 +250,10 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           Effect.flatMap((client) =>
             client.linearAutopilot.oauthStart({
               headers: { origin: window.location.origin },
-              payload: unsavedClientId ? { clientId: unsavedClientId } : {},
+              payload: {
+                ...(unsavedClientId ? { clientId: unsavedClientId } : {}),
+                ...(unsavedClientSecret ? { clientSecret: unsavedClientSecret } : {}),
+              },
             }),
           ),
         ),
@@ -307,7 +325,9 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
               (settings.clientId === REDACTED_SECRET || serverClientIdConfigured
                 ? REDACTED_SECRET
                 : ""),
-          clientSecret: settings.clientSecret,
+          clientSecret: clearClientSecret
+            ? ""
+            : clientSecret || (clientSecretConfigured ? REDACTED_SECRET : ""),
         },
       });
     } catch {
@@ -486,6 +506,37 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                   onClick={() => {
                     setClearClientId(true);
                     setClientId("");
+                  }}
+                >
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                aria-label="Linear OAuth app Client secret"
+                className="min-w-64 flex-1"
+                type="password"
+                autoComplete="off"
+                value={clientSecret}
+                placeholder={
+                  clientSecretConfigured && !clearClientSecret
+                    ? "Client secret saved"
+                    : "Client secret"
+                }
+                disabled={!writeAllowed}
+                onChange={(event) => {
+                  setClientSecret(event.target.value);
+                  setClearClientSecret(false);
+                }}
+              />
+              {clientSecretConfigured && !clearClientSecret ? (
+                <Button
+                  variant="ghost"
+                  disabled={!writeAllowed}
+                  onClick={() => {
+                    setClearClientSecret(true);
+                    setClientSecret("");
                   }}
                 >
                   Clear
