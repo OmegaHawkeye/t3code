@@ -298,6 +298,20 @@ describe("scoped settings writes", () => {
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });
 
+    it("accepts a replaced secret that the environment returns redacted", async () => {
+      const redacted = "•".repeat(6);
+      const linearAutopilot = { ...DEFAULT_SERVER_SETTINGS.linearAutopilot, clientId: redacted };
+      const withSecret = environment("Laptop", { settings: { linearAutopilot } });
+      expect(
+        await outcome(
+          planScopedSettingsPatch(resolveSettingsScope({}, [], [withSecret]), [withSecret], {
+            linearAutopilot: { ...linearAutopilot, clientId: "new-client-id" },
+          }),
+          upgradedLaptop({ linearAutopilot }),
+        ),
+      ).toEqual({ saved: [laptop.label], failed: [] });
+    });
+
     it("accepts a write that matches what the environment already had", async () => {
       expect(
         await outcome(

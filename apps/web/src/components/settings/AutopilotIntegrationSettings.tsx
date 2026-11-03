@@ -2,13 +2,16 @@ import { autopilotSourceMode, ProjectId, type ProjectSnapshot } from "@t3tools/c
 import * as Effect from "effect/Effect";
 import { ExternalLinkIcon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSearch } from "@tanstack/react-router";
 
 import { PrimaryEnvironmentHttpClient } from "../../environments/primary/httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
   AutopilotIntakeModePicker,
+  AutopilotIntegrationSettingsLoading,
   AutopilotSetupStep,
   AutopilotSourcesLayout,
 } from "./AutopilotSetup";
@@ -74,6 +77,23 @@ export function AutopilotIntegrationSettingsPanel({
 }: {
   readonly integration: "github" | "slack";
 }) {
+  const primaryEnvironment = usePrimaryEnvironment();
+  if (
+    primaryEnvironment !== null &&
+    primaryEnvironment.serverConfig === null &&
+    (primaryEnvironment.connection.phase === "connecting" ||
+      primaryEnvironment.connection.phase === "reconnecting")
+  ) {
+    return <AutopilotIntegrationSettingsLoading />;
+  }
+  return <AutopilotIntegrationSettingsForm integration={integration} />;
+}
+
+function AutopilotIntegrationSettingsForm({
+  integration,
+}: {
+  readonly integration: "github" | "slack";
+}) {
   const settings = useScopedSettings((value) => value.linearAutopilot);
   const updateSettings = useUpdateScopedSettings();
   const writeAllowed = useScopedSettingsWriteAllowed();
@@ -92,9 +112,9 @@ export function AutopilotIntegrationSettingsPanel({
   const [slackClientId, setSlackClientId] = useState("");
   const [slackClientSecret, setSlackClientSecret] = useState("");
   const [slackOAuthBusy, setSlackOAuthBusy] = useState(false);
+  const oauthResult = useSearch({ strict: false, select: (search) => search.slackOAuth });
   const [slackOAuthNotice, setSlackOAuthNotice] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    const result = new URLSearchParams(window.location.search).get("slackOAuth");
+    const result = oauthResult;
     if (result === "connected") return "Slack workspace connected.";
     if (result === "denied") return "Slack authorization was cancelled.";
     if (result === "failed")
@@ -133,7 +153,6 @@ export function AutopilotIntegrationSettingsPanel({
     typeof window === "undefined" || !secureWebhookOrigin
       ? undefined
       : slackAppConfigurationUrl(window.location.origin);
-
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the project list from the server once on mount.
   useEffect(() => {
     let cancelled = false;

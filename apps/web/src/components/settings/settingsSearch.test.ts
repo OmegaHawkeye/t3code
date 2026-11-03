@@ -15,6 +15,7 @@ import {
   movedSettingsPath,
   searchSettings,
   SETTINGS_NAV_GROUPS,
+  SETTINGS_SECTION_LABELS,
   SETTINGS_SEARCH_ITEMS,
   sourceControlHostSearchItems,
   sourceControlHostSettingsSearchId,
@@ -76,6 +77,12 @@ describe("searchSettings", () => {
   it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {
     expect(SETTINGS_NAV_GROUPS.flatMap((group) => group.paths)).not.toContain("/settings/secrets");
     expect(searchSettings("1password").map((item) => item.to)).not.toContain("/settings/secrets");
+  });
+
+  it("lists every settings page in the sidebar except redirects and disabled features", () => {
+    const navPaths = new Set<string>(SETTINGS_NAV_GROUPS.flatMap((group) => group.paths));
+    const hidden = Object.keys(SETTINGS_SECTION_LABELS).filter((path) => !navPaths.has(path));
+    expect(hidden.toSorted()).toEqual(["/settings/diagnostics", "/settings/secrets"]);
   });
 
   it("matches normalized title substrings", () => {

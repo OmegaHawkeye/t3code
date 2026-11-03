@@ -19,6 +19,7 @@ const TOKEN_URL = "https://api.linear.app/oauth/token";
 const REVOKE_URL = "https://api.linear.app/oauth/revoke";
 const AUTHORIZE_URL = "https://linear.app/oauth/authorize";
 const CLIENT_ID_SECRET = "linear-autopilot-client-id";
+const CLIENT_SECRET_SECRET = "linear-autopilot-client-secret";
 const TOKEN_SECRET = "linear-autopilot-oauth-token";
 const OAUTH_SCOPE = "read,write,app:assignable,app:mentionable";
 const CALLBACK_PATH = "/api/linear-autopilot/oauth/callback";
@@ -33,6 +34,7 @@ const TokenResponse = Schema.Struct({
   expires_in: Schema.Int.check(Schema.isGreaterThan(0)),
   scope: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
 });
+const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
 const StoredToken = Schema.Struct({
   accessToken: Schema.String,
   refreshToken: Schema.String,
@@ -45,6 +47,7 @@ const encodeStoredToken = Schema.encodeEffect(StoredTokenJson);
 
 interface PendingFlow {
   readonly clientId: string;
+  readonly clientSecret: string;
   readonly verifier: string;
   readonly redirectUri: string;
   readonly returnUrl: string;
@@ -78,6 +81,7 @@ export class LinearAutopilotOAuth extends Context.Service<
       readonly callbackOrigin: string;
       readonly returnOrigin: string;
       readonly clientId?: string;
+      readonly clientSecret?: string;
     }) => Effect.Effect<
       { readonly authorizationUrl: string; readonly redirectUri: string },
       LinearAutopilotOAuthError
@@ -92,6 +96,7 @@ export class LinearAutopilotOAuth extends Context.Service<
     >;
     readonly isConnected: Effect.Effect<boolean, LinearAutopilotOAuthError>;
     readonly isClientIdConfigured: Effect.Effect<boolean, LinearAutopilotOAuthError>;
+    readonly isClientSecretConfigured: Effect.Effect<boolean, LinearAutopilotOAuthError>;
     readonly disconnect: Effect.Effect<void, LinearAutopilotOAuthError>;
     readonly accessToken: (options?: {
       readonly forceRefresh?: boolean;
@@ -121,6 +126,13 @@ const make = Effect.gen(function* () {
         : Effect.fail(new LinearAutopilotOAuthError({ reason: "credentials-incomplete" }));
     }),
   );
+  const readClientSecret = secretStore.get(CLIENT_SECRET_SECRET).pipe(
+    Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })),
+    Effect.map((value) =>
+      Option.isSome(value) ? new TextDecoder().decode(value.value).trim() : "",
+    ),
+  );
+  const isClientSecretConfigured = readClientSecret.pipe(Effect.map((value) => value.length > 0));
   const isClientIdConfigured = secretStore.get(CLIENT_ID_SECRET).pipe(
     Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })),
     Effect.map(
@@ -159,10 +171,44 @@ const make = Effect.gen(function* () {
       Effect.flatMap(
         HttpClientResponse.matchStatus({
           "2xx": (response) =>
-            HttpClientResponse.schemaBodyJson(TokenResponse)(response).pipe(
+            response.json.pipe(
+              Effect.flatMap((body) =>
+                decodeTokenResponse(body).pipe(
+                  Effect.tapError(() =>
+                    Effect.logWarning("Linear token response did not match the expected shape", {
+                      fieldTypes:
+                        body && typeof body === "object"
+                          ? Object.fromEntries(
+                              Object.entries(body).map(([key, value]) => [
+                                key,
+                                Array.isArray(value) ? "array" : typeof value,
+                              ]),
+                            )
+                          : typeof body,
+                    }),
+                  ),
+                ),
+              ),
               Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "exchange" })),
             ),
-          orElse: () => Effect.fail(new LinearAutopilotOAuthError({ reason: "exchange" })),
+          orElse: (response) =>
+            response.json.pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.flatMap((body) => {
+                const error =
+                  body && typeof body === "object"
+                    ? {
+                        error: (body as Record<string, unknown>).error,
+                        description: (body as Record<string, unknown>).error_description,
+                      }
+                    : null;
+                return Effect.logWarning("Linear token request was rejected", {
+                  status: response.status,
+                  ...error,
+                });
+              }),
+              Effect.andThen(Effect.fail(new LinearAutopilotOAuthError({ reason: "exchange" }))),
+            ),
         }),
       ),
     );
@@ -179,6 +225,7 @@ const make = Effect.gen(function* () {
           HttpClientRequest.post(TOKEN_URL).pipe(
             HttpClientRequest.bodyUrlParams({
               client_id: input.flow.clientId,
+              client_secret: input.flow.clientSecret,
               code: input.code,
               code_verifier: input.flow.verifier,
               grant_type: "authorization_code",
@@ -187,6 +234,9 @@ const make = Effect.gen(function* () {
           ),
         );
         yield* saveClientId(input.flow.clientId);
+        yield* secretStore
+          .set(CLIENT_SECRET_SECRET, new TextEncoder().encode(input.flow.clientSecret))
+          .pipe(Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "secret-store" })));
         yield* saveToken(response);
       }),
   );
@@ -219,7 +269,9 @@ const make = Effect.gen(function* () {
         );
         const clientId =
           input.clientId === undefined ? (yield* readCredentials).clientId : input.clientId.trim();
-        if (!clientId || clientId.length > 512) {
+        // Linear issues app-actor tokens only to a confidential client.
+        const clientSecret = input.clientSecret?.trim() || (yield* readClientSecret);
+        if (!clientId || clientId.length > 512 || !clientSecret || clientSecret.length > 512) {
           return yield* new LinearAutopilotOAuthError({ reason: "credentials-incomplete" });
         }
         const [stateBytes, verifierBytes] = yield* Effect.all(
@@ -237,6 +289,7 @@ const make = Effect.gen(function* () {
         const now = clock.currentTimeMillisUnsafe();
         const flow: PendingFlow = {
           clientId,
+          clientSecret,
           verifier,
           redirectUri,
           returnUrl,
@@ -296,10 +349,12 @@ const make = Effect.gen(function* () {
   const refreshToken = Effect.fn("LinearAutopilotOAuth.refreshToken")((stored: StoredToken) =>
     Effect.gen(function* () {
       const credentials = yield* readCredentials;
+      const clientSecret = yield* readClientSecret;
       const response = yield* requestToken(
         HttpClientRequest.post(TOKEN_URL).pipe(
           HttpClientRequest.bodyUrlParams({
             client_id: credentials.clientId,
+            ...(clientSecret ? { client_secret: clientSecret } : {}),
             grant_type: "refresh_token",
             refresh_token: stored.refreshToken,
           }),
@@ -354,6 +409,7 @@ const make = Effect.gen(function* () {
     callback,
     isConnected: readStoredToken.pipe(Effect.map(Option.isSome)),
     isClientIdConfigured,
+    isClientSecretConfigured,
     disconnect,
     accessToken,
   });

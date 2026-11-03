@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { Skeleton } from "../ui/skeleton";
 import { autopilotSourceStatus, INTAKE_MODE_LABEL } from "./AutopilotSetup.logic";
 import { SettingsPageContainer } from "./settingsLayout";
 import { useScopedSettings } from "./useScopedSettings";
@@ -76,6 +77,48 @@ export function AutopilotSourcesLayout({
         </div>
       </div>
     </SettingsPageContainer>
+  );
+}
+
+export function AutopilotIntegrationSettingsLoading() {
+  return (
+    <div aria-busy="true">
+      <p className="sr-only" role="status">
+        Loading Autopilot integration settings…
+      </p>
+      <SettingsPageContainer width="wide" className="gap-6">
+        <div className="grid gap-6 md:grid-cols-[13rem_minmax(0,1fr)]">
+          <nav aria-label="Autopilot sources" className="space-y-2">
+            <Skeleton className="h-8 w-28" />
+            <div className="space-y-1">
+              {["Linear", "GitHub Issues", "Slack"].map((source) => (
+                <div key={source} className="space-y-2 rounded-md px-2.5 py-2">
+                  <span className="sr-only">{source}</span>
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+              ))}
+            </div>
+          </nav>
+          <div className="min-w-0 space-y-4">
+            <Skeleton className="h-6 w-40" />
+            {[0, 1, 2, 3].map((step) => (
+              <section key={step} className="space-y-3 rounded-xl border p-4">
+                <div className="flex items-center gap-3">
+                  <Skeleton shape="pill" className="size-6" />
+                  <Skeleton className="h-4 w-48" />
+                </div>
+                <Skeleton className="h-4 w-full max-w-md" />
+                {step < 3 ? <Skeleton className="h-9 w-56" /> : null}
+              </section>
+            ))}
+            <div className="flex justify-end">
+              <Skeleton className="h-9 w-36" />
+            </div>
+          </div>
+        </div>
+      </SettingsPageContainer>
+    </div>
   );
 }
 

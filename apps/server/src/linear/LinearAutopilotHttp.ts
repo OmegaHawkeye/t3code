@@ -83,10 +83,15 @@ export const layer = HttpApiBuilder.group(
           if (!callbackOrigin) {
             return yield* failEnvironmentInternal("internal_error", "Request URL unavailable");
           }
-          return yield* Effect.all([oauth.isConnected, oauth.isClientIdConfigured]).pipe(
-            Effect.map(([connected, clientIdConfigured]) => ({
+          return yield* Effect.all([
+            oauth.isConnected,
+            oauth.isClientIdConfigured,
+            oauth.isClientSecretConfigured,
+          ]).pipe(
+            Effect.map(([connected, clientIdConfigured, clientSecretConfigured]) => ({
               connected,
               clientIdConfigured,
+              clientSecretConfigured,
               redirectUri: new URL(
                 "/api/linear-autopilot/oauth/callback",
                 callbackOrigin,

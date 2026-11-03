@@ -11,6 +11,11 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as LinearAutopilotOAuth from "./LinearAutopilotOAuth.ts";
 
+const formOf = (request: HttpClientRequest.HttpClientRequest) =>
+  new URLSearchParams(
+    request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+  );
+
 it.effect("connects a workspace with PKCE, rotates its token, and disconnects", () => {
   const secrets = new Map<string, Uint8Array>();
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
@@ -72,6 +77,7 @@ it.effect("connects a workspace with PKCE, rotates its token, and disconnects", 
       callbackOrigin: "http://localhost:6200",
       returnOrigin: "http://localhost:5173",
       clientId: "linear-client-id",
+      clientSecret: "linear-client-secret",
     });
     const authorization = new URL(started.authorizationUrl);
     const state = authorization.searchParams.get("state");
@@ -96,11 +102,27 @@ it.effect("connects a workspace with PKCE, rotates its token, and disconnects", 
       new TextDecoder().decode(secrets.get("linear-autopilot-client-id")),
       "linear-client-id",
     );
+    assert.strictEqual(
+      new TextDecoder().decode(secrets.get("linear-autopilot-client-secret")),
+      "linear-client-secret",
+    );
     assert.isTrue(yield* oauth.isConnected);
     assert.strictEqual(yield* oauth.accessToken(), "access-2");
     assert.strictEqual(tokenRequest, 2);
     assert.strictEqual(yield* oauth.accessToken({ forceRefresh: true }), "access-3");
     assert.strictEqual(tokenRequest, 3);
+
+    const tokenForms = requests
+      .filter((request) => request.url.endsWith("/oauth/token"))
+      .map(formOf);
+    assert.deepStrictEqual(
+      tokenForms.map((form) => [form.get("grant_type"), form.get("client_secret")]),
+      [
+        ["authorization_code", "linear-client-secret"],
+        ["refresh_token", "linear-client-secret"],
+        ["refresh_token", "linear-client-secret"],
+      ],
+    );
 
     const replay = yield* Effect.exit(
       oauth.callback({ state: state!, code: "authorization-code" }),
