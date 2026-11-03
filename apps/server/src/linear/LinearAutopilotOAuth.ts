@@ -160,9 +160,31 @@ const make = Effect.gen(function* () {
         HttpClientResponse.matchStatus({
           "2xx": (response) =>
             HttpClientResponse.schemaBodyJson(TokenResponse)(response).pipe(
+              Effect.tapError((cause) =>
+                Effect.logWarning("Linear token response did not match the expected shape", {
+                  issue: String(cause).slice(0, 500),
+                }),
+              ),
               Effect.mapError(() => new LinearAutopilotOAuthError({ reason: "exchange" })),
             ),
-          orElse: () => Effect.fail(new LinearAutopilotOAuthError({ reason: "exchange" })),
+          orElse: (response) =>
+            response.json.pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.flatMap((body) => {
+                const error =
+                  body && typeof body === "object"
+                    ? {
+                        error: (body as Record<string, unknown>).error,
+                        description: (body as Record<string, unknown>).error_description,
+                      }
+                    : null;
+                return Effect.logWarning("Linear token request was rejected", {
+                  status: response.status,
+                  ...error,
+                });
+              }),
+              Effect.andThen(Effect.fail(new LinearAutopilotOAuthError({ reason: "exchange" }))),
+            ),
         }),
       ),
     );
