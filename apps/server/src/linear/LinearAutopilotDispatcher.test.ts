@@ -48,6 +48,10 @@ const project = {
 const harness = (
   projectDefaultModelSelection: ModelSelection | null = modelSelection,
   intakeMode: "disabled" | "shadow" | "queue" = "queue",
+  git: {
+    readonly defaultBranch: string | null;
+    readonly remoteBranches: ReadonlyArray<string>;
+  } = { defaultBranch: "main", remoteBranches: ["main"] },
 ) => {
   const launches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotReadOnlyLaunchInput> = [];
   const implementationLaunches: Array<LinearAutopilotPhaseLaunch.LinearAutopilotImplementationLaunchInput> =
@@ -67,7 +71,8 @@ const harness = (
     }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),
-      resolveDefaultBranchName: () => Effect.succeed("main"),
+      resolveDefaultBranchName: () => Effect.succeed(git.defaultBranch),
+      remoteBranchExists: (input) => Effect.succeed(git.remoteBranches.includes(input.refName)),
     }),
     Layer.mock(LinearAutopilotPhaseLaunch.LinearAutopilotPhaseLaunch)({
       launchReadOnly: (input) =>
@@ -248,6 +253,36 @@ it.effect("launches planning once from the durable eligible outbox", () => {
       launched: 0,
       deferred: 0,
     });
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("falls back to the remote main or master branch when origin/HEAD is not set", () => {
+  const setup = harness(modelSelection, "queue", {
+    defaultBranch: null,
+    remoteBranches: ["master"],
+  });
+  return Effect.gen(function* () {
+    const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
+    yield* intake.ingest({
+      eventId: null,
+      workspaceId: "workspace-1",
+      issueId: "issue-1",
+      identifier: "OME-280",
+      title: "Sandbox",
+      url: "https://linear.app/ome/issue/OME-280",
+      description: "Repo created with git init and push",
+      projectId,
+      sourceUpdatedAt: DateTime.formatIso(now),
+      observedAt: DateTime.formatIso(now),
+    });
+
+    const dispatcher = yield* LinearAutopilotDispatcher.LinearAutopilotDispatcher;
+    assert.deepStrictEqual(yield* dispatcher.dispatchPending(10), {
+      candidates: 1,
+      launched: 1,
+      deferred: 0,
+    });
+    assert.equal(setup.launches[0]?.baseRef, "master");
   }).pipe(Effect.provide(setup.layer));
 });
 
