@@ -145,7 +145,7 @@ export class LinearAutopilotClient extends Context.Service<
   }
 >()("t3/linear/LinearAutopilotClient") {}
 
-const issueQuery = `query LinearAutopilotIntakeIssues($teamId: ID!, $updatedSince: DateTime!, $after: String) {
+const issueQuery = `query LinearAutopilotIntakeIssues($teamId: ID!, $updatedSince: DateTimeOrDuration!, $after: String) {
   issues(first: ${PAGE_SIZE}, after: $after, filter: { team: { id: { eq: $teamId } }, updatedAt: { gte: $updatedSince } }, orderBy: updatedAt) {
     nodes {
       id

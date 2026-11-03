@@ -96,6 +96,30 @@ it.effect("decodes bounded issue pages for one configured team", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("declares the updatedAt filter variable with Linear's comparator type", () => {
+  const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+  const layer = makeLayer(
+    { data: { issues: { nodes: [], pageInfo: { endCursor: null, hasNextPage: false } } } },
+    200,
+    requests,
+  );
+  return Effect.gen(function* () {
+    const client = yield* LinearAutopilotClient.LinearAutopilotClient;
+    yield* client.listIssues({
+      accessToken: "secret-test-token",
+      teamId: "team-ome",
+      updatedSince: "2026-10-19T08:00:00.000Z",
+    });
+
+    const body =
+      requests[0]?.body._tag === "Uint8Array"
+        ? (JSON.parse(new TextDecoder().decode(requests[0].body.body)) as { query: string })
+        : { query: "" };
+    // Linear rejects `DateTime!` here with HTTP 400 GRAPHQL_VALIDATION_FAILED.
+    assert.match(body.query, /\$updatedSince: DateTimeOrDuration!/);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "loads the team directory separately and fetches complete options only for the selected team",
   () => {
