@@ -331,22 +331,50 @@ const make = Effect.gen(function* () {
             attempt = { ...attempt, status: "succeeded", summary };
             phasesCompleted += 1;
           } else {
-            yield* attempts.recordResult({
+            const summary = `Autopilot ${phase} run ended with status ${projectionRun.status}.`;
+            const pullRequest =
+              projection.thread.branchPullRequest ?? projection.thread.linkedPullRequest ?? null;
+            const recorded = yield* attempts.recordResult({
               attemptId: attempt.attemptId,
               expectedStatus: attempt.status,
-              status: "failed",
+              status: phase === "delivery" && pullRequest !== null ? "succeeded" : "failed",
               finishedAt: yield* DateTime.now,
-              summary: `Autopilot ${phase} run ended with status ${projectionRun.status}.`,
+              summary:
+                phase === "delivery" && pullRequest !== null
+                  ? `Delivery thread ended with status ${projectionRun.status}; reusing its linked pull request ${pullRequest.url}.`
+                  : summary,
             });
-            yield* runs.transition({
-              runId: run.runId,
-              expectedRevision: run.revision,
-              nextState: "paused",
-              updatedAt: yield* DateTime.now,
-            });
-            const autopilot = currentSettings.linearAutopilot;
-            yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
-            continue;
+            if (!recorded) {
+              deferred += 1;
+              continue;
+            }
+            if (phase === "delivery" && pullRequest !== null) {
+              attempt = {
+                ...attempt,
+                status: "succeeded",
+                summary: `Delivery thread ended with status ${projectionRun.status}; reusing its linked pull request ${pullRequest.url}.`,
+              };
+              phasesCompleted += 1;
+            } else if (phase === "delivery") {
+              const launched = yield* launchImplementationFollowUp(
+                run,
+                "delivery",
+                attempt.attemptNumber + 1,
+                "Resume delivery from the verified implementation. First check whether this branch already has an open pull request and reuse it if so. Otherwise commit the reviewed changes, push the branch, and open one pull request targeting the approved base branch. Include the source ticket identifier and return the pull request URL. Never merge or mark the source ticket done.",
+              );
+              if (!launched) deferred += 1;
+              continue;
+            } else {
+              yield* runs.transition({
+                runId: run.runId,
+                expectedRevision: run.revision,
+                nextState: "paused",
+                updatedAt: yield* DateTime.now,
+              });
+              const autopilot = currentSettings.linearAutopilot;
+              yield* updateTicketStatus(run, autopilot, "blocked", autopilot.blockedStateId);
+              continue;
+            }
           }
         }
 
