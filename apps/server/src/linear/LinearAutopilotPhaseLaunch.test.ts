@@ -94,7 +94,7 @@ it.effect(
       assert.equal(repeated.commandId, first.commandId);
       assert.equal(setup.launches.length, 2);
       assert.equal(setup.launches[0]?.interactionMode, "plan");
-      assert.equal(setup.launches[0]?.runtimeMode, "approval-required");
+      assert.equal(setup.launches[0]?.runtimeMode, "auto");
       assert.deepStrictEqual(setup.launches[0]?.workspaceStrategy, {
         type: "worktree",
         baseRef: "main",
@@ -149,7 +149,7 @@ it.effect("forwards per-phase persona instructions to the launch", () => {
   }).pipe(Effect.provide(setup.layer));
 });
 
-it.effect("launches approved implementation in a fresh approval-required worktree", () => {
+it.effect("launches approved implementation in a fresh unattended worktree", () => {
   const setup = harness();
   return Effect.gen(function* () {
     const intake = yield* LinearAutopilotIntake.LinearAutopilotIntakeRepository;
@@ -188,7 +188,7 @@ it.effect("launches approved implementation in a fresh approval-required worktre
     assert.equal(launched.threadId, ThreadId.make("planning-thread"));
     assert.equal(setup.launches.length, 1);
     assert.equal(setup.launches[0]?.interactionMode, "default");
-    assert.equal(setup.launches[0]?.runtimeMode, "approval-required");
+    assert.equal(setup.launches[0]?.runtimeMode, "auto");
     assert.deepStrictEqual(setup.launches[0]?.workspaceStrategy, {
       type: "worktree",
       baseRef: "main",
