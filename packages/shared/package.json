@@ -526,6 +526,10 @@
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
+    },
+    "./desktopFlavor": {
+      "types": "./src/desktopFlavor.ts",
+      "import": "./src/desktopFlavor.ts"
     }
   },
   "scripts": {

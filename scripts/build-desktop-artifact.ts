@@ -42,6 +42,7 @@ import {
 } from "./lib/cli-external-packages.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
+import { type DesktopFlavor, resolveDesktopFlavor } from "@t3tools/shared/desktopFlavor";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -188,6 +189,7 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslRuntime: Option.Option<string>;
+  readonly flavor: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -278,6 +280,15 @@ export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedError
 ) {
   override get message(): string {
     return `Unsupported architecture '${this.arch}' for ${this.platform}.`;
+  }
+}
+
+export class UnknownDesktopFlavorError extends Schema.TaggedError<UnknownDesktopFlavorError>()(
+  "UnknownDesktopFlavorError",
+  { flavor: Schema.String },
+) {
+  override get message(): string {
+    return `Unknown desktop flavor '${this.flavor}'.`;
   }
 }
 
@@ -950,6 +961,7 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslRuntime: string | undefined;
+  readonly flavor: DesktopFlavor | null;
 }
 
 interface StagePackageJson {
@@ -1643,6 +1655,7 @@ const BuildEnvConfig = Config.all({
   mockUpdates: Config.Boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.String("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
   wslRuntime: Config.String("T3CODE_DESKTOP_WSL_RUNTIME").pipe(Config.option),
+  flavor: Config.String("T3CODE_DESKTOP_FLAVOR").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1736,6 +1749,16 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const wslRuntime =
     Option.getOrUndefined(input.wslRuntime) ?? Option.getOrUndefined(env.wslRuntime);
 
+  const flavorId = (
+    Option.getOrUndefined(input.flavor) ??
+    Option.getOrUndefined(env.flavor) ??
+    ""
+  ).trim();
+  const flavor = resolveDesktopFlavor(flavorId);
+  if (flavorId.length > 0 && flavor === null) {
+    return yield* new UnknownDesktopFlavorError({ flavor: flavorId });
+  }
+
   return {
     platform,
     target,
@@ -1749,6 +1772,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslRuntime,
+    flavor,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -1825,6 +1849,7 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
   repoRoot: string,
   appVersion: string,
   verbose: boolean,
+  flavor: DesktopFlavor | null = null,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1850,7 +1875,7 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
           ChildProcess.make(spawnCommand.command, spawnCommand.args, {
             cwd: repoRoot,
             shell: spawnCommand.shell,
-            env: { APP_VERSION: appVersion },
+            env: { APP_VERSION: appVersion, T3CODE_DESKTOP_FLAVOR: flavor?.id ?? "" },
             extendEnv: true,
           }),
           { label: "vp run build:desktop", verbose },
@@ -2769,12 +2794,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     | undefined,
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  flavor: DesktopFlavor | null = null,
 ) {
+  const productName = flavor?.displayName ?? resolveDesktopProductName(version);
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    appId: flavor?.appUserModelId ?? DESKTOP_APP_ID,
+    productName,
+    artifactName:
+      flavor === null
+        ? "T3-Code-${version}-${arch}.${ext}"
+        : `${flavor.displayName}-\${version}-\${arch}.\${ext}`,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2802,7 +2832,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const updateChannel = resolveDesktopUpdateChannel(version);
   // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
   buildConfig.publish = null;
-  if (!isDesktopPreviewVersion(version)) {
+  // A flavor must never pick up upstream's release feed and update itself back to upstream.
+  if (flavor === null && !isDesktopPreviewVersion(version)) {
     const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
@@ -2869,7 +2900,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac" && target === "dmg") {
     buildConfig.dmg = {
       // Finder caches DMG backgrounds by volume name; give each installer its own.
-      title: `${resolveDesktopProductName(version)} ${version} Installer`,
+      title: `${productName} ${version} Installer`,
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
         width: 640,
@@ -3653,7 +3684,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    yield* buildDesktopBundlesUnlocked(repoRoot, appVersion, options.verbose);
+    yield* buildDesktopBundlesUnlocked(repoRoot, appVersion, options.verbose, options.flavor);
   }
 
   const requiredBuildInputs = [
@@ -3882,6 +3913,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      options.flavor,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -4043,7 +4075,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
-      appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      appExecutableName: `${options.flavor?.displayName ?? resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
       appVersion,
       expectWslRuntime: bundlesWslRuntime({
@@ -4176,6 +4208,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslRuntime: Flag.String("wsl-runtime").pipe(
     Flag.withDescription(
       "Path to the Linux CLI release archive (t3-<version>-linux-x64.tar.gz) to embed as the WSL runtime of a Windows build (env: T3CODE_DESKTOP_WSL_RUNTIME).",
+    ),
+    Flag.optional,
+  ),
+  flavor: Flag.String("flavor").pipe(
+    Flag.withDescription(
+      "Rebranded build with its own app id, name and data folders, e.g. tiphys (env: T3CODE_DESKTOP_FLAVOR).",
     ),
     Flag.optional,
   ),

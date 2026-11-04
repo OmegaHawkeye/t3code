@@ -14,6 +14,7 @@ import {
   resolveDesktopStateDir,
   type JoinPath,
 } from "./DesktopStatePaths.ts";
+import { BUILD_DESKTOP_FLAVOR, resolveDesktopFlavor } from "./DesktopFlavor.ts";
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;
@@ -54,10 +55,14 @@ function resolveEarlyDesktopSettingsPath(input: {
   readonly joinPath: JoinPath;
 }): string {
   const t3Home = Option.fromUndefinedOr(input.env.T3CODE_HOME);
+  const flavor = isDevelopmentEnvironment(input.env)
+    ? null
+    : resolveDesktopFlavor(BUILD_DESKTOP_FLAVOR);
   const baseDir = resolveDesktopBaseDir({
     homeDirectory: input.homeDirectory,
     joinPath: input.joinPath,
     t3Home,
+    ...(flavor === null ? {} : { defaultDirName: flavor.baseDirName }),
   });
   const stateDir = resolveDesktopStateDir({
     baseDir,
