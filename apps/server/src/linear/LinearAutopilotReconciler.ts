@@ -255,6 +255,30 @@ const make = Effect.gen(function* () {
             .getThreadProjection(ThreadId.make(attempt.threadId))
             .pipe(Effect.result);
           if (projectionResult._tag === "Failure") {
+            if (
+              phase === "delivery" &&
+              projectionResult.failure._tag === "ProjectionStoreThreadNotFoundError"
+            ) {
+              const recorded = yield* attempts.recordResult({
+                attemptId: attempt.attemptId,
+                expectedStatus: attempt.status,
+                status: "failed",
+                finishedAt: yield* DateTime.now,
+                summary: "The delivery thread disappeared before completion; retrying delivery.",
+              });
+              if (!recorded) {
+                deferred += 1;
+                continue;
+              }
+              const launched = yield* launchImplementationFollowUp(
+                run,
+                "delivery",
+                attempt.attemptNumber + 1,
+                "Resume delivery from the verified implementation. First check whether this branch already has an open pull request and reuse it if so. Otherwise commit the reviewed changes, push the branch, and open one pull request targeting the approved base branch. Include the source ticket identifier and return the pull request URL. Never merge or mark the source ticket done.",
+              );
+              if (!launched) deferred += 1;
+              continue;
+            }
             deferred += 1;
             continue;
           }
