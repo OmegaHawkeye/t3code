@@ -319,3 +319,36 @@ it.effect("reports HTTP failures without reading or logging the response body", 
     }
   }).pipe(Effect.provide(makeLayer({ message: "opaque" }, 429))),
 );
+
+it.effect("loads one issue's current intake facts by id", () => {
+  const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+  const layer = makeLayer({ data: { issue } }, 200, requests);
+  return Effect.gen(function* () {
+    const client = yield* LinearAutopilotClient.LinearAutopilotClient;
+    const current = yield* client.getIssue({
+      accessToken: "secret-test-token",
+      issueId: "issue-1",
+    });
+
+    assert.isNotNull(current);
+    assert.strictEqual(current.state.id, "state-ready");
+    assert.deepStrictEqual(current.labels.nodes, [{ id: "label-autopilot" }]);
+    assert.strictEqual(current.project?.id, "linear-project");
+    const body =
+      requests[0]?.body._tag === "Uint8Array"
+        ? (JSON.parse(new TextDecoder().decode(requests[0].body.body)) as {
+            query: string;
+            variables: { issueId: string };
+          })
+        : null;
+    assert.match(body?.query ?? "", /issue\(id: \$issueId\)/);
+    assert.strictEqual(body?.variables.issueId, "issue-1");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("returns null when the issue no longer exists", () =>
+  Effect.gen(function* () {
+    const client = yield* LinearAutopilotClient.LinearAutopilotClient;
+    assert.isNull(yield* client.getIssue({ accessToken: "secret-test-token", issueId: "gone" }));
+  }).pipe(Effect.provide(makeLayer({ data: { issue: null } }))),
+);

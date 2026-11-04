@@ -50,6 +50,7 @@ const makeLayer = (input: { readonly failRetry?: boolean } = {}) => {
             }
             return Effect.succeed(page);
           },
+          getIssue: () => Effect.die("Unexpected issue lookup"),
           updateIssueState: ({ accessToken }) => {
             stateUpdates += 1;
             if (accessToken === "token-1" || input.failRetry) {
