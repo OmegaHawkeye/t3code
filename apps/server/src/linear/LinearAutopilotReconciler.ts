@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import type * as PlatformError from "effect/PlatformError";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -17,6 +18,7 @@ import * as LinearAutopilotRun from "./LinearAutopilotRun.ts";
 import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
 import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -29,6 +31,7 @@ import type { LinearAutopilotSettings, ServerSettingsError } from "@t3tools/cont
 
 const APPROVAL_POLICY_VERSION = "human-review-v1";
 const MAX_PHASE_SUMMARY_LENGTH = 4000;
+const isMissingProjection = Schema.is(ProjectionStore.ProjectionStoreThreadNotFoundError);
 
 export interface LinearAutopilotReconcileResult {
   readonly runsChecked: number;
@@ -257,7 +260,9 @@ const make = Effect.gen(function* () {
           if (projectionResult._tag === "Failure") {
             if (
               phase === "delivery" &&
-              projectionResult.failure._tag === "ProjectionStoreThreadNotFoundError"
+              projectionResult.failure._tag === "OrchestratorProjectionError" &&
+              projectionResult.failure.cause !== undefined &&
+              isMissingProjection(projectionResult.failure.cause)
             ) {
               const recorded = yield* attempts.recordResult({
                 attemptId: attempt.attemptId,
