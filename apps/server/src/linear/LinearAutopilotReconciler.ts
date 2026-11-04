@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import type * as PlatformError from "effect/PlatformError";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -17,6 +18,7 @@ import * as LinearAutopilotRun from "./LinearAutopilotRun.ts";
 import * as LinearAutopilotToken from "./LinearAutopilotToken.ts";
 import * as LinearAutopilotPhaseAttempts from "../persistence/LinearAutopilotPhaseAttempts.ts";
 import * as LinearAutopilotIntake from "../persistence/LinearAutopilotIntake.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as LinearAutopilotRuns from "../persistence/LinearAutopilotRuns.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -29,6 +31,7 @@ import type { LinearAutopilotSettings, ServerSettingsError } from "@t3tools/cont
 
 const APPROVAL_POLICY_VERSION = "human-review-v1";
 const MAX_PHASE_SUMMARY_LENGTH = 4000;
+const isMissingProjection = Schema.is(ProjectionStore.ProjectionStoreThreadNotFoundError);
 
 export interface LinearAutopilotReconcileResult {
   readonly runsChecked: number;
@@ -255,6 +258,32 @@ const make = Effect.gen(function* () {
             .getThreadProjection(ThreadId.make(attempt.threadId))
             .pipe(Effect.result);
           if (projectionResult._tag === "Failure") {
+            if (
+              phase === "delivery" &&
+              projectionResult.failure._tag === "OrchestratorProjectionError" &&
+              projectionResult.failure.cause !== undefined &&
+              isMissingProjection(projectionResult.failure.cause)
+            ) {
+              const recorded = yield* attempts.recordResult({
+                attemptId: attempt.attemptId,
+                expectedStatus: attempt.status,
+                status: "failed",
+                finishedAt: yield* DateTime.now,
+                summary: "The delivery thread disappeared before completion; retrying delivery.",
+              });
+              if (!recorded) {
+                deferred += 1;
+                continue;
+              }
+              const launched = yield* launchImplementationFollowUp(
+                run,
+                "delivery",
+                attempt.attemptNumber + 1,
+                "Resume delivery from the verified implementation. First check whether this branch already has an open pull request and reuse it if so. Otherwise commit the reviewed changes, push the branch, and open one pull request targeting the approved base branch. Include the source ticket identifier and return the pull request URL. Never merge or mark the source ticket done.",
+              );
+              if (!launched) deferred += 1;
+              continue;
+            }
             deferred += 1;
             continue;
           }

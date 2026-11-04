@@ -9,7 +9,7 @@ import * as LinearAutopilotDispatcher from "./LinearAutopilotDispatcher.ts";
 import * as LinearAutopilotPoll from "./LinearAutopilotPoll.ts";
 import * as LinearAutopilotReconciler from "./LinearAutopilotReconciler.ts";
 
-const POLL_INTERVAL = "5 minutes";
+const POLL_INTERVAL = "30 seconds";
 
 export class LinearAutopilotWorker extends Context.Service<
   LinearAutopilotWorker,
