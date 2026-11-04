@@ -690,6 +690,63 @@ it.effect("blocks delivery when the thread has no linked pull request", () => {
   }).pipe(Effect.provide(setup.layer));
 });
 
+it.effect("retries delivery when its thread ended before opening a pull request", () => {
+  const setup = harness({
+    projection: {
+      thread: { modelSelection: plannerModel },
+      runs: [{ ordinal: 1, status: "failed", id: "delivery-run" }],
+      messages: [],
+      turnItems: [],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("delivering");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedAttempt(runId, "verification", "VERDICT: PASS\\nChecks passed.");
+    yield* seedRunningAttempt(runId, "delivery");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    const delivery = setup.followUps[0];
+    assert.isDefined(delivery);
+    assert.equal(delivery.phase, "delivery");
+    assert.equal(delivery.attemptNumber, 2);
+    assert.include(delivery.instruction, "reuse it if so");
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    assert.equal((yield* runs.getById(runId))?.state, "delivering");
+  }).pipe(Effect.provide(setup.layer));
+});
+
+it.effect("reuses a linked pull request after a delivery thread fails", () => {
+  const setup = harness({
+    projection: {
+      thread: {
+        modelSelection: plannerModel,
+        branchPullRequest: {
+          projectId,
+          repository: "owner/repository",
+          number: 23,
+          url: "https://github.com/owner/repository/pull/23",
+        },
+      },
+      runs: [{ ordinal: 1, status: "failed", id: "delivery-run" }],
+      messages: [],
+      turnItems: [],
+    },
+  });
+  return Effect.gen(function* () {
+    const runId = yield* seedRun("delivering");
+    yield* seedAttempt(runId, "implementation", "Implementation complete");
+    yield* seedAttempt(runId, "verification", "VERDICT: PASS\\nChecks passed.");
+    yield* seedRunningAttempt(runId, "delivery");
+    const reconciler = yield* LinearAutopilotReconciler.LinearAutopilotReconciler;
+    yield* reconciler.reconcile();
+    const runs = yield* LinearAutopilotRuns.LinearAutopilotRunRepository;
+    assert.equal((yield* runs.getById(runId))?.state, "delivered");
+    assert.equal(setup.followUps.length, 0);
+    assert.equal(setup.linearUpdates.at(-1)?.stateId, "review-state-1");
+  }).pipe(Effect.provide(setup.layer));
+});
+
 it.effect("opens one bounded CI repair follow-up for a failing pull request", () => {
   const setup = harness({
     projection: {
