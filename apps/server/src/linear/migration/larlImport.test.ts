@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
-  defaultInstanceIdForDriver,
   LinearAutopilotSettings,
   type ModelSelection,
   ProjectId,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -19,11 +19,11 @@ import {
 const encodeSettings = Schema.encodeSync(LinearAutopilotSettings);
 
 const codexSelection: ModelSelection = {
-  instanceId: defaultInstanceIdForDriver("codex"),
+  instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.3-codex",
 };
 const claudeSelection: ModelSelection = {
-  instanceId: defaultInstanceIdForDriver("claude"),
+  instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-4-8",
 };
 
@@ -100,8 +100,9 @@ describe("buildLinearAutopilotPatch", () => {
       baseResolution(),
     );
     const budget = (pid: string) =>
-      patch.workflows[pid]?.edges.find((e) => e.from === "implement" && e.on === "verify-fail")
-        ?.budget;
+      patch.workflows[ProjectId.make(pid)]?.edges.find(
+        (e) => e.from === "implement" && e.on === "verify-fail",
+      )?.budget;
     expect(budget("t3-bp")).toBe(3);
     expect(budget("t3-byt")).toBe(2);
   });

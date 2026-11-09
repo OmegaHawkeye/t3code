@@ -1,10 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off -- one-time operator script reads the Larl SQLite read-only.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- one-time operator script reads the Larl SQLite read-only and prints a report.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
-import { defaultInstanceIdForDriver, type ModelSelection, ProjectId } from "@t3tools/contracts";
+import { type ModelSelection, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 
 import {
   buildLinearAutopilotPatch,
@@ -13,7 +13,7 @@ import {
   type LarlLoopConfig,
   type LarlRepositoryRow,
   mergeIntoSettings,
-} from "./larlImport.ts";
+} from "../src/linear/migration/larlImport.ts";
 
 // Baked operator identities (OME team), resolved 2026-11-09; see OME-237.
 const TEAM_ID = "2220ee07-e546-4ca9-9b56-a56b8b940c94";
@@ -45,10 +45,10 @@ const T3_PROJECT_ID_BY_PATH: Record<string, ProjectId> = {
   [P("buildyourtravelplan")]: ProjectId.make("c9ad873a-281f-4177-b0bf-c668ec608f6b"),
 };
 
-// Confirm the exact model per driver against the T3 provider catalog before applying.
+// Confirm the exact instance + model per driver against the T3 provider catalog before applying.
 const MODEL_SELECTION_BY_DRIVER: Record<string, ModelSelection> = {
-  codex: { instanceId: defaultInstanceIdForDriver("codex"), model: "gpt-5.3-codex" },
-  claude: { instanceId: defaultInstanceIdForDriver("claude"), model: "claude-opus-4-8" },
+  codex: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.3-codex" },
+  claude: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-4-8" },
 };
 
 const DB_PATH = P("local-linear-agent-runner/data/linear-agent-runner.sqlite");
