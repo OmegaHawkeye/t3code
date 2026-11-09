@@ -60,12 +60,16 @@ export type LarlAutopilotPatch = Pick<
   | "workflows"
 >;
 
-const DEFAULT_REPAIR_BUDGET = 2;
+const DEFAULT_REVISE_ROUNDS = 2;
 
-const resolveModel = (resolution: LarlImportResolution, driver: string): ModelSelection => {
+const resolveModel = (
+  resolution: LarlImportResolution,
+  driver: string,
+  rowLabel: string,
+): ModelSelection => {
   const selection = resolution.modelSelectionByDriver[driver];
   if (selection === undefined) {
-    throw new LarlImportUnresolvedError("model-instance", driver);
+    throw new LarlImportUnresolvedError("model-instance", `${driver} for ${rowLabel}`);
   }
   return selection;
 };
@@ -75,12 +79,14 @@ const buildWorkflow = (
   loop: LarlLoopConfig,
   resolution: LarlImportResolution,
 ): LinearAutopilotWorkflow => {
+  const label = row.repositoryFullName;
   const modelByKind: Partial<Record<string, ModelSelection>> = {
-    plan: resolveModel(resolution, row.planner ?? loop.codingAgentAdapter),
-    review: resolveModel(resolution, row.reviewer ?? loop.codingAgentAdapter),
-    implement: resolveModel(resolution, loop.codingAgentAdapter),
+    plan: resolveModel(resolution, row.planner ?? loop.codingAgentAdapter, label),
+    review: resolveModel(resolution, row.reviewer ?? loop.codingAgentAdapter, label),
+    implement: resolveModel(resolution, loop.codingAgentAdapter, label),
   };
-  const repairBudget = row.maxReviseRounds ?? DEFAULT_REPAIR_BUDGET;
+  // LARL's maxReviseRounds gates the plan-review revise loop (review→revise→plan), not repair.
+  const reviseBudget = row.maxReviseRounds ?? DEFAULT_REVISE_ROUNDS;
 
   return {
     ...defaultLinearAutopilotWorkflow,
@@ -89,9 +95,7 @@ const buildWorkflow = (
       return modelSelection === undefined ? node : { ...node, persona: { modelSelection } };
     }),
     edges: defaultLinearAutopilotWorkflow.edges.map((edge) =>
-      edge.from === "implement" && edge.on === "verify-fail"
-        ? { ...edge, budget: repairBudget }
-        : edge,
+      edge.from === "review" && edge.on === "revise" ? { ...edge, budget: reviseBudget } : edge,
     ),
   };
 };

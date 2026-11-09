@@ -93,18 +93,20 @@ describe("buildLinearAutopilotPatch", () => {
     expect(node("review")?.persona?.modelSelection).toEqual(claudeSelection);
   });
 
-  it("overrides the implement verify-fail budget from max_revise_rounds, defaulting to 2", () => {
+  it("sets the plan-revise (review→revise) budget from max_revise_rounds, defaulting to 2", () => {
     const patch = buildLinearAutopilotPatch(
       [row({ maxReviseRounds: 3 }), secondRow({ maxReviseRounds: null })],
       loop,
       baseResolution(),
     );
-    const budget = (pid: string) =>
-      patch.workflows[ProjectId.make(pid)]?.edges.find(
-        (e) => e.from === "implement" && e.on === "verify-fail",
-      )?.budget;
-    expect(budget("t3-bp")).toBe(3);
-    expect(budget("t3-byt")).toBe(2);
+    const edge = (pid: string, from: string, on: string) =>
+      patch.workflows[ProjectId.make(pid)]?.edges.find((e) => e.from === from && e.on === on)
+        ?.budget;
+    // LARL maxReviseRounds governs the plan-review revise loop, not implementation repair.
+    expect(edge("t3-bp", "review", "revise")).toBe(3);
+    expect(edge("t3-byt", "review", "revise")).toBe(2);
+    // the implementation-repair loop keeps the T3 default budget untouched.
+    expect(edge("t3-bp", "implement", "verify-fail")).toBe(2);
   });
 
   it("throws naming the row when project_name has no Linear UUID", () => {
@@ -140,6 +142,8 @@ describe("buildLinearAutopilotPatch", () => {
       expect(e).toBeInstanceOf(LarlImportUnresolvedError);
       expect((e as LarlImportUnresolvedError).kind).toBe("model-instance");
       expect((e as LarlImportUnresolvedError).detail).toContain("gemini");
+      // names the offending repo, like the linear-project / t3-project errors do.
+      expect((e as LarlImportUnresolvedError).detail).toContain("OmegaHawkeye/business-platform");
     }
   });
 

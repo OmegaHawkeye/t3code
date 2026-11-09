@@ -18,6 +18,7 @@ import {
 // Baked operator identities (OME team), resolved 2026-11-09; see OME-237.
 const TEAM_ID = "2220ee07-e546-4ca9-9b56-a56b8b940c94";
 const READY_STATE_ID = "486c22f5-3169-4746-8a49-21141b45b31d"; // Todo
+const READY_STATE_NAME = "Todo"; // the state the baked READY_STATE_ID refers to
 const NEEDS_HUMAN_APPROVAL_STATE_ID = "01f6f4ea-0e63-4db7-b1a2-b228883fb9ca";
 const BLOCKED_STATE_ID = "ee2f6d47-b0fe-41cb-941d-ebc5e0fa8d7d";
 const REVIEW_STATE_ID = "832d61bf-3330-4b34-a15f-7c7065742ba7";
@@ -75,7 +76,7 @@ const readLarlState = (dbPath: string): { rows: LarlRepositoryRow[]; loop: LarlL
         autoMerge: (r.auto_merge as number | null) ?? null,
       }));
     const configRow = db.prepare(`SELECT config_json FROM runtime_config LIMIT 1`).get();
-    // Read only the two non-secret keys; never touch tokens/secrets in runtime_config.
+    // runtime_config may hold secrets; read only the two non-secret keys below and emit nothing else.
     const config = JSON.parse((configRow?.config_json as string | undefined) ?? "{}") as Record<
       string,
       unknown
@@ -107,6 +108,11 @@ const main = () => {
 
   console.log(`Larl DB: ${DB_PATH}`);
   console.log(`Repositories: ${rows.length}; ready state: ${loop.readyStateName}\n`);
+  if (loop.readyStateName !== READY_STATE_NAME) {
+    console.error(
+      `WARNING: Larl LOOP_READY_STATE is "${loop.readyStateName}" but the baked ready-state id is "${READY_STATE_NAME}". Update READY_STATE_ID before applying.\n`,
+    );
+  }
 
   let patch;
   try {
@@ -123,7 +129,9 @@ const main = () => {
       process.exitCode = 1;
       return;
     }
-    throw error;
+    console.error(`FAILED to build or validate the patch: ${String(error)}`);
+    process.exitCode = 1;
+    return;
   }
 
   for (const [linearId, t3Id] of Object.entries(patch.projectMappings)) {
