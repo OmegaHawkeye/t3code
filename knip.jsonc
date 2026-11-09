@@ -47,6 +47,8 @@
       "entry": [
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
+        // One-time operator script for the Larl → T3 autopilot cutover (OME-237).
+        "scripts/larlImport.ts",
         "scripts/cli.ts",
         "scripts/fetch-expo-schema.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
