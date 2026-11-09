@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { defaultInstanceIdForDriver, type ModelSelection, ProjectId } from "@t3tools/contracts";
+import {
+  defaultInstanceIdForDriver,
+  LinearAutopilotSettings,
+  type ModelSelection,
+  ProjectId,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import {
   buildLinearAutopilotPatch,
@@ -7,7 +13,10 @@ import {
   type LarlImportResolution,
   type LarlLoopConfig,
   type LarlRepositoryRow,
+  mergeIntoSettings,
 } from "./larlImport.ts";
+
+const encodeSettings = Schema.encodeSync(LinearAutopilotSettings);
 
 const codexSelection: ModelSelection = {
   instanceId: defaultInstanceIdForDriver("codex"),
@@ -159,5 +168,20 @@ describe("buildLinearAutopilotPatch", () => {
     expect(buildLinearAutopilotPatch(twoRows, loop, baseResolution())).toEqual(
       buildLinearAutopilotPatch(twoRows, loop, baseResolution()),
     );
+  });
+});
+
+describe("mergeIntoSettings", () => {
+  it("merges the patch onto defaults and decodes against LinearAutopilotSettings", () => {
+    const patch = buildLinearAutopilotPatch(twoRows, loop, baseResolution());
+    const settings = mergeIntoSettings(patch);
+    expect(settings.mode).toBe("shadow");
+    expect(settings.teamId).toBe("team-ome");
+    expect(settings.projectMappings).toEqual(patch.projectMappings);
+    expect(Object.keys(settings.workflows).sort()).toEqual(Object.keys(patch.workflows).sort());
+    // untouched fields fall back to the schema's decoding defaults
+    expect(settings.githubIssueProjectMappings).toEqual({});
+    // the result is a fully-valid settings object
+    expect(() => encodeSettings(settings)).not.toThrow();
   });
 });

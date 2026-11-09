@@ -1,10 +1,11 @@
 import {
   defaultLinearAutopilotWorkflow,
-  type LinearAutopilotSettings,
+  LinearAutopilotSettings,
   type LinearAutopilotWorkflow,
   type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 export interface LarlRepositoryRow {
   readonly teamKey: string;
@@ -130,3 +131,9 @@ export const buildLinearAutopilotPatch = (
     workflows,
   };
 };
+
+const decodeSettings = Schema.decodeUnknownSync(LinearAutopilotSettings);
+
+/** Fold the patch onto schema defaults, validating it decodes into full settings. */
+export const mergeIntoSettings = (patch: LarlAutopilotPatch): LinearAutopilotSettings =>
+  decodeSettings(patch);
