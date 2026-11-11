@@ -7,6 +7,12 @@ export interface DesktopFlavor {
   readonly userDataDirName: string;
   /** Default T3 home under the user's home directory; T3CODE_HOME still overrides it. */
   readonly baseDirName: string;
+  /**
+   * First backend port probed, so a flavor does not fight upstream for 3773 and
+   * land on a drifting port. A drifting port breaks the OAuth redirect URI the
+   * user registered with Linear. T3CODE_PORT still overrides it.
+   */
+  readonly defaultBackendPort: number;
 }
 
 const DESKTOP_FLAVORS: Readonly<Record<string, DesktopFlavor>> = {
@@ -16,6 +22,7 @@ const DESKTOP_FLAVORS: Readonly<Record<string, DesktopFlavor>> = {
     appUserModelId: "com.omegahawkeye.tiphys",
     userDataDirName: "tiphys",
     baseDirName: ".tiphys",
+    defaultBackendPort: 3783,
   },
 };
 
