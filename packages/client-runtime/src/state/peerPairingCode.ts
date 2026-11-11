@@ -18,9 +18,9 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { createEnvironmentCommand } from "./runtime.ts";
+import { appName } from "../branding.ts";
 
 const MINT_TIMEOUT_MS = 8_000;
-const PEER_PAIRING_CODE_LABEL = "T3 Code link";
 
 /** Minting failed; the user can still paste a code from the other environment. */
 export class PeerPairingCodeError extends Data.TaggedError("PeerPairingCodeError")<{
@@ -53,7 +53,7 @@ const mintPeerPairingCode = Effect.fn("clientRuntime.state.mintPeerPairingCode")
     request: ({ client, headers }) =>
       client.pairingCredential({
         headers,
-        payload: { label: PEER_PAIRING_CODE_LABEL, scopes: mcpClientScopes(access) },
+        payload: { label: `${appName()} link`, scopes: mcpClientScopes(access) },
       }),
   }).pipe(
     Effect.mapError(

@@ -17,6 +17,7 @@ import type { EnvironmentThreadShell } from "./models.ts";
 import * as DateTime from "effect/DateTime";
 import type { AtomCommandResult } from "./runtime.ts";
 import type { ThreadStructure, ThreadStructureVisibleTurnItem } from "./models.ts";
+import { appName } from "../branding.ts";
 
 export type ApprovalResponder = (
   requestId: RuntimeRequestId,
@@ -68,7 +69,7 @@ export function fullAccessOverrideExplanation(
 ): string {
   return override === "ask_rule"
     ? "Full access skips approvals, but an ask rule in the agent's own settings matches this action, so it still asks. Remove or narrow that rule to stop these prompts."
-    : "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.";
+    : `Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. ${appName()} can't turn these off, so check the request and approve it if it's what you expect.`;
 }
 
 export interface ThreadUserInputQuestion extends Omit<

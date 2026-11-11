@@ -5,6 +5,8 @@ import {
   type RelayProtectedError,
 } from "@t3tools/contracts/relay";
 
+import { appName } from "../branding.ts";
+
 export const DPOP_CLOCK_HINT =
   "Hint: Check that automatic date and time is enabled on both devices, then try again.";
 
@@ -94,15 +96,15 @@ export function relayRequestFailureDetail(error: {
   return null;
 }
 
-const RELAY_TUNNEL_RELEASED_MESSAGE =
-  "Offline for a while, so its T3 Connect tunnel was removed. Start T3 Code on that computer and update it to the latest version to reconnect.";
+const relayTunnelReleasedMessage = () =>
+  `Offline for a while, so its T3 Connect tunnel was removed. Start ${appName()} on that computer and update it to the latest version to reconnect.`;
 
 export function relayOfflineReasonMessage(
   status: Pick<RelayEnvironmentStatusResponse, "offlineReason">,
 ): string | null {
   switch (status.offlineReason) {
     case "tunnel_released":
-      return RELAY_TUNNEL_RELEASED_MESSAGE;
+      return relayTunnelReleasedMessage();
     case undefined:
       return null;
   }
