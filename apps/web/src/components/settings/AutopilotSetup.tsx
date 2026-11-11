@@ -146,20 +146,20 @@ export function AutopilotSetupStep({
   return (
     <section
       aria-label={title}
-      className={cn("rounded-xl border", open && "bg-card", locked && "opacity-60")}
+      className={cn("rounded-xl border", open && "bg-card", locked && !done && "opacity-60")}
     >
       <header className="flex items-center gap-3 px-4 py-3">
         <span
           aria-hidden
           className={cn(
             "flex size-6 shrink-0 items-center justify-center rounded-full border text-xs",
-            done && !locked && "border-success bg-success text-white",
+            done && "border-success bg-success text-white",
           )}
         >
-          {locked ? (
-            <LockIcon className="size-3" />
-          ) : done ? (
+          {done ? (
             <CheckIcon className="size-3.5" />
+          ) : locked ? (
+            <LockIcon className="size-3" />
           ) : (
             step
           )}

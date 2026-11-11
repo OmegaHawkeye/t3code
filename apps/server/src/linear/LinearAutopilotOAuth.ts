@@ -264,7 +264,11 @@ const make = Effect.gen(function* () {
             catch: () => new LinearAutopilotOAuthError({ reason: "invalid-origin" }),
           });
         const [parsedCallbackOrigin, parsedReturnOrigin] = yield* Effect.all(
-          [parseOrigin(callbackOrigin), parseOrigin(returnOrigin)],
+          [
+            parseOrigin(callbackOrigin),
+            // Desktop authorizes in the system browser, which returns to the server's web UI.
+            parseOrigin(returnOrigin === "t3code://app" ? callbackOrigin : returnOrigin),
+          ],
           { concurrency: 2 },
         );
         const clientId =
