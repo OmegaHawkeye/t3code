@@ -105,3 +105,72 @@ export const DEVELOPMENT_PUBLIC_ICON_OVERRIDES = resolveWebIconOverrides(
   "development",
   "apps/web/public",
 );
+
+export interface DesktopIconAssetPaths {
+  readonly macIconPng: string;
+  readonly linuxIconPng: string;
+  readonly windowsIconIco: string;
+}
+
+/** Per-flavor icon sources, so a rebranded build ships its own app icon and favicons. */
+const FLAVOR_ASSET_PATHS = {
+  tiphys: {
+    macIconPng: "assets/tiphys/tiphys-macos-1024.png",
+    linuxIconPng: "assets/tiphys/tiphys-universal-1024.png",
+    windowsIconIco: "assets/tiphys/tiphys-windows.ico",
+    web: {
+      faviconIco: "assets/tiphys/tiphys-web-favicon.ico",
+      favicon16Png: "assets/tiphys/tiphys-web-favicon-16x16.png",
+      favicon32Png: "assets/tiphys/tiphys-web-favicon-32x32.png",
+      appleTouchIconPng: "assets/tiphys/tiphys-web-apple-touch-180.png",
+    },
+  },
+} as const satisfies Record<
+  string,
+  DesktopIconAssetPaths & { readonly web: Record<keyof typeof WEB_ICON_TARGET_FILENAMES, string> }
+>;
+
+function flavorAssets(
+  flavorId: string | null | undefined,
+): (typeof FLAVOR_ASSET_PATHS)[keyof typeof FLAVOR_ASSET_PATHS] | null {
+  if (!flavorId || !Object.hasOwn(FLAVOR_ASSET_PATHS, flavorId)) return null;
+  return FLAVOR_ASSET_PATHS[flavorId as keyof typeof FLAVOR_ASSET_PATHS];
+}
+
+export function resolveFlavorDesktopIconAssets(
+  flavorId: string | null | undefined,
+): DesktopIconAssetPaths | null {
+  const assets = flavorAssets(flavorId);
+  if (assets === null) return null;
+  return {
+    macIconPng: assets.macIconPng,
+    linuxIconPng: assets.linuxIconPng,
+    windowsIconIco: assets.windowsIconIco,
+  };
+}
+
+export function resolveFlavorWebIconOverrides(
+  flavorId: string | null | undefined,
+  targetDirectory: string,
+): ReadonlyArray<IconOverride> | null {
+  const assets = flavorAssets(flavorId);
+  if (assets === null) return null;
+  return [
+    {
+      sourceRelativePath: assets.web.faviconIco,
+      targetRelativePath: `${targetDirectory}/${WEB_ICON_TARGET_FILENAMES.faviconIco}`,
+    },
+    {
+      sourceRelativePath: assets.web.favicon16Png,
+      targetRelativePath: `${targetDirectory}/${WEB_ICON_TARGET_FILENAMES.favicon16Png}`,
+    },
+    {
+      sourceRelativePath: assets.web.favicon32Png,
+      targetRelativePath: `${targetDirectory}/${WEB_ICON_TARGET_FILENAMES.favicon32Png}`,
+    },
+    {
+      sourceRelativePath: assets.web.appleTouchIconPng,
+      targetRelativePath: `${targetDirectory}/${WEB_ICON_TARGET_FILENAMES.appleTouchIconPng}`,
+    },
+  ];
+}

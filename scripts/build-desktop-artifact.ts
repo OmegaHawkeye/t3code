@@ -32,6 +32,7 @@ import {
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
   BRAND_ASSET_PATHS,
+  resolveFlavorDesktopIconAssets,
   resolveWebAssetBrandForChannel,
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
@@ -2742,7 +2743,15 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
   return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
 }
 
-export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
+export function resolveDesktopBuildIconAssets(
+  version: string,
+  flavor?: DesktopFlavor | null,
+): DesktopBuildIconAssets {
+  const flavorIcons = resolveFlavorDesktopIconAssets(flavor?.id);
+  if (flavorIcons !== null) {
+    return flavorIcons;
+  }
+
   if (resolveDesktopUpdateChannel(version) === "nightly") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
@@ -3666,7 +3675,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   });
 
   const appVersion = options.version ?? serverPackageJson.version;
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const iconAssets = resolveDesktopBuildIconAssets(appVersion, options.flavor);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
@@ -3754,8 +3763,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   }
 
   const webAssetBrand = resolveDesktopWebAssetBrand(appVersion);
-  yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client");
-  yield* Effect.log(`[desktop-artifact] Applied ${webAssetBrand} web client branding.`);
+  yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client", options.flavor?.id);
+  yield* Effect.log(
+    `[desktop-artifact] Applied ${options.flavor?.id ?? webAssetBrand} web client branding.`,
+  );
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
