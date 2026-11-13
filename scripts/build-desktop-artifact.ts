@@ -2841,8 +2841,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const updateChannel = resolveDesktopUpdateChannel(version);
   // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
   buildConfig.publish = null;
-  // A flavor must never pick up upstream's release feed and update itself back to upstream.
-  if (flavor === null && !isDesktopPreviewVersion(version)) {
+  if (flavor !== null) {
+    // A flavor must never pick up upstream's release feed and update itself back
+    // to upstream, so it only ever publishes to and reads from its own repo.
+    if (flavor.updateRepository && !isDesktopPreviewVersion(version)) {
+      const [owner, repo, ...rest] = flavor.updateRepository.split("/");
+      if (owner && repo && rest.length === 0) {
+        buildConfig.publish = [{ provider: "github", owner, repo, releaseType: "release" }];
+      }
+    }
+  } else if (!isDesktopPreviewVersion(version)) {
     const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];

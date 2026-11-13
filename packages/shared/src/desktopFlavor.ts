@@ -13,6 +13,12 @@ export interface DesktopFlavor {
    * user registered with Linear. T3CODE_PORT still overrides it.
    */
   readonly defaultBackendPort: number;
+  /**
+   * GitHub "owner/repo" that hosts this flavor's own desktop releases. It bakes
+   * an update feed pointing here, never at upstream, so the flavor only ever
+   * sees its own builds. Omit to ship with auto-update disabled.
+   */
+  readonly updateRepository?: string;
 }
 
 const DESKTOP_FLAVORS: Readonly<Record<string, DesktopFlavor>> = {
@@ -23,6 +29,7 @@ const DESKTOP_FLAVORS: Readonly<Record<string, DesktopFlavor>> = {
     userDataDirName: "tiphys",
     baseDirName: ".tiphys",
     defaultBackendPort: 3783,
+    updateRepository: "OmegaHawkeye/t3code",
   },
 };
 
