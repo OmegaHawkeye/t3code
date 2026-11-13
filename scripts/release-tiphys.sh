@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build and publish a Tiphys desktop release to the flavor's own update feed
-# (OmegaHawkeye/t3code GitHub Releases). The installed app reads this feed and
+# (OmegaHawkeye/Tiphys GitHub Releases). The installed app reads this feed and
 # notifies on a newer version; it is not Developer-ID signed, so updates are
 # downloaded and drag-installed by hand, never silently applied.
 #
@@ -8,7 +8,7 @@
 set -euo pipefail
 
 VERSION="${1:?usage: release-tiphys.sh <version>  (e.g. 0.1.8)}"
-REPO="OmegaHawkeye/t3code"
+REPO="OmegaHawkeye/Tiphys"
 ARCH="arm64"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

@@ -29,7 +29,7 @@ const DESKTOP_FLAVORS: Readonly<Record<string, DesktopFlavor>> = {
     userDataDirName: "tiphys",
     baseDirName: ".tiphys",
     defaultBackendPort: 3783,
-    updateRepository: "OmegaHawkeye/t3code",
+    updateRepository: "OmegaHawkeye/Tiphys",
   },
 };
 

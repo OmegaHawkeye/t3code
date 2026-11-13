@@ -568,7 +568,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(flavored.artifactName, "Tiphys-${version}-${arch}.${ext}");
       // The flavor feed is pinned to its own repo, so upstream env feeds never leak in.
       assert.deepEqual(flavored.publish, [
-        { provider: "github", owner: "OmegaHawkeye", repo: "t3code", releaseType: "release" },
+        { provider: "github", owner: "OmegaHawkeye", repo: "Tiphys", releaseType: "release" },
       ]);
     }).pipe(
       Effect.provide(
