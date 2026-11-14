@@ -32,6 +32,7 @@ import {
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
   BRAND_ASSET_PATHS,
+  resolveFlavorDesktopIconAssets,
   resolveWebAssetBrandForChannel,
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
@@ -2742,7 +2743,15 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
   return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
 }
 
-export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
+export function resolveDesktopBuildIconAssets(
+  version: string,
+  flavor?: DesktopFlavor | null,
+): DesktopBuildIconAssets {
+  const flavorIcons = resolveFlavorDesktopIconAssets(flavor?.id);
+  if (flavorIcons !== null) {
+    return flavorIcons;
+  }
+
   if (resolveDesktopUpdateChannel(version) === "nightly") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
@@ -2832,8 +2841,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const updateChannel = resolveDesktopUpdateChannel(version);
   // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
   buildConfig.publish = null;
-  // A flavor must never pick up upstream's release feed and update itself back to upstream.
-  if (flavor === null && !isDesktopPreviewVersion(version)) {
+  if (flavor !== null) {
+    // A flavor must never pick up upstream's release feed and update itself back
+    // to upstream, so it only ever publishes to and reads from its own repo.
+    if (flavor.updateRepository && !isDesktopPreviewVersion(version)) {
+      const [owner, repo, ...rest] = flavor.updateRepository.split("/");
+      if (owner && repo && rest.length === 0) {
+        buildConfig.publish = [{ provider: "github", owner, repo, releaseType: "release" }];
+      }
+    }
+  } else if (!isDesktopPreviewVersion(version)) {
     const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
@@ -3666,7 +3683,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   });
 
   const appVersion = options.version ?? serverPackageJson.version;
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const iconAssets = resolveDesktopBuildIconAssets(appVersion, options.flavor);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
@@ -3754,8 +3771,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   }
 
   const webAssetBrand = resolveDesktopWebAssetBrand(appVersion);
-  yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client");
-  yield* Effect.log(`[desktop-artifact] Applied ${webAssetBrand} web client branding.`);
+  yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client", options.flavor?.id);
+  yield* Effect.log(
+    `[desktop-artifact] Applied ${options.flavor?.id ?? webAssetBrand} web client branding.`,
+  );
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });

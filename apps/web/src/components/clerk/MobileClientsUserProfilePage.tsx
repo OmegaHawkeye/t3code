@@ -16,6 +16,7 @@ import {
   ClerkUserProfileRefreshButton,
   ClerkUserProfileRow,
 } from "./ClerkUserProfilePage";
+import { appName } from "@t3tools/client-runtime/branding";
 
 const MOBILE_CLIENT_SKELETON_ROWS = ["primary", "secondary"] as const;
 
@@ -94,8 +95,8 @@ function EmptyMobileClients() {
       <EmptyHeader>
         <EmptyTitle>No mobile clients</EmptyTitle>
         <EmptyDescription>
-          Install T3 Code on your phone and sign in to T3 Connect to get push notifications and Live
-          Activities.
+          Install {appName()} on your phone and sign in to T3 Connect to get push notifications and
+          Live Activities.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>

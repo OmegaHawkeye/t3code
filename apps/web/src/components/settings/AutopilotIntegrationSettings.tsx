@@ -21,6 +21,7 @@ import {
   useScopedSettingsWriteAllowed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { appName } from "@t3tools/client-runtime/branding";
 
 const REDACTED_SECRET = "••••••";
 
@@ -236,7 +237,7 @@ function AutopilotIntegrationSettingsForm({
   const connectSlack = async () => {
     if (window.location.protocol !== "https:") {
       setSlackOAuthNotice(
-        "Slack requires a publicly reachable HTTPS server for its OAuth callback and event webhooks. Open Autopilot from your HTTPS T3 Code URL, then connect Slack.",
+        `Slack requires a publicly reachable HTTPS server for its OAuth callback and event webhooks. Open Autopilot from your HTTPS ${appName()} URL, then connect Slack.`,
       );
       return;
     }
@@ -283,7 +284,7 @@ function AutopilotIntegrationSettingsForm({
   const httpsNotice = secureWebhookOrigin ? null : (
     <p className="text-sm text-warning-foreground" role="status">
       {isGithub ? "GitHub" : "Slack"} must reach this server over public HTTPS. Open Autopilot from
-      your HTTPS T3 Code URL to continue setup.
+      your HTTPS {appName()} URL to continue setup.
     </p>
   );
 
@@ -311,7 +312,7 @@ function AutopilotIntegrationSettingsForm({
           <p className="text-sm text-muted-foreground">
             {settings.githubAppSlug
               ? "Install the App on each repository Autopilot should watch."
-              : "T3 Code creates a private GitHub App with a signed Issues webhook and stores its secret. Then install it on the repositories to watch."}
+              : `${appName()} creates a private GitHub App with a signed Issues webhook and stores its secret. Then install it on the repositories to watch.`}
           </p>
           <div className="flex flex-wrap gap-2">
             {settings.githubAppSlug ? (

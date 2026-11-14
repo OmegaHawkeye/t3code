@@ -16,6 +16,7 @@ import { Button } from "./ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
+import { appName } from "@t3tools/client-runtime/branding";
 
 /** Home screen for the hosted app before any computer is added. */
 export function HostedEmptyState() {
@@ -43,7 +44,7 @@ export function HostedEmptyState() {
                 ? "Turn it back on, or connect a different computer."
                 : cloudEnabled
                   ? "Your agents run on your computer."
-                  : "Your agents run on your computer. Start T3 Code there first."}
+                  : `Your agents run on your computer. Start ${appName()} there first.`}
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>

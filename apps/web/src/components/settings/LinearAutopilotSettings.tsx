@@ -36,6 +36,7 @@ import {
   useScopedSettingsWriteAllowed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { ensureLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import {
   AutopilotChipSelect,
@@ -59,6 +60,14 @@ const linearOAuthAppConfigurationUrl = (redirectUri: string) => {
 };
 
 async function fetchAutopilotCatalog(teamId?: string) {
+  const projects = await runPrimaryHttp(
+    PrimaryEnvironmentHttpClient.pipe(
+      Effect.flatMap((client) => client.projects.snapshot({ headers: {} })),
+    ),
+  ).then(
+    (snapshot) => snapshot.projects.filter((project) => project.deletedAt === null),
+    () => [],
+  );
   try {
     const status = await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
@@ -69,7 +78,7 @@ async function fetchAutopilotCatalog(teamId?: string) {
       return {
         connected: false,
         catalog: null,
-        projects: [],
+        projects,
         error: null,
         redirectUri: status.redirectUri,
         clientIdConfigured: status.clientIdConfigured,
@@ -89,7 +98,7 @@ async function fetchAutopilotCatalog(teamId?: string) {
       return {
         connected: true,
         catalog: null,
-        projects: [],
+        projects,
         error:
           "Linear is connected, but its workspace options could not be loaded. Retry; if the problem persists, reconnect Linear.",
         redirectUri: status.redirectUri,
@@ -97,37 +106,20 @@ async function fetchAutopilotCatalog(teamId?: string) {
         clientSecretConfigured: status.clientSecretConfigured ?? false,
       };
     }
-    try {
-      const projectSnapshot = await runPrimaryHttp(
-        PrimaryEnvironmentHttpClient.pipe(
-          Effect.flatMap((client) => client.projects.snapshot({ headers: {} })),
-        ),
-      );
-      return {
-        connected: true,
-        catalog,
-        projects: projectSnapshot.projects.filter((project) => project.deletedAt === null),
-        error: null,
-        redirectUri: status.redirectUri,
-        clientIdConfigured: status.clientIdConfigured,
-        clientSecretConfigured: status.clientSecretConfigured ?? false,
-      };
-    } catch {
-      return {
-        connected: true,
-        catalog,
-        projects: [],
-        error: "Linear is connected, but T3 project options could not be loaded.",
-        redirectUri: status.redirectUri,
-        clientIdConfigured: status.clientIdConfigured,
-        clientSecretConfigured: status.clientSecretConfigured ?? false,
-      };
-    }
+    return {
+      connected: true,
+      catalog,
+      projects,
+      error: null,
+      redirectUri: status.redirectUri,
+      clientIdConfigured: status.clientIdConfigured,
+      clientSecretConfigured: status.clientSecretConfigured ?? false,
+    };
   } catch {
     return {
       connected: false,
       catalog: null,
-      projects: [],
+      projects,
       error: "Could not check the Linear connection. Check the server connection, then retry.",
     };
   }
@@ -277,7 +269,15 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
         setOauthBusy(false);
         return;
       }
-      window.location.assign(oauthStart.authorizationUrl);
+      if (window.location.protocol === "t3code:") {
+        await ensureLocalApi().shell.openExternal(oauthStart.authorizationUrl);
+        setOauthNotice(
+          "Complete sign-in in your browser, then refresh the Linear connection here.",
+        );
+        setOauthBusy(false);
+      } else {
+        window.location.assign(oauthStart.authorizationUrl);
+      }
     } catch {
       setCatalogError(
         "Could not start Linear sign-in. Check the saved OAuth app Client ID and server connection, then retry.",
@@ -388,7 +388,8 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
   const issuesChosen = teamId.length > 0 && readyStateIds.length > 0;
   const projectsMapped = Object.keys(projectMappings).length > 0;
   const teamStates = selectedTeam?.states ?? [];
-  const stateName = (id: string) => teamStates.find((state) => state.id === id)?.name ?? id;
+  const stateName = (id: string) =>
+    teamStates.find((state) => state.id === id)?.name ?? "Saved status";
   const statusRoles = [
     {
       label: "Needs approval",
@@ -444,6 +445,11 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
         </>
       }
     >
+      {oauthNotice && !connected ? (
+        <Button variant="outline" onClick={() => reloadCatalog()} disabled={loadingCatalog}>
+          Refresh Linear connection
+        </Button>
+      ) : null}
       <AutopilotSetupStep step={1} title="Connect Linear" done={connected} summary="Connected">
         {connected ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -467,8 +473,8 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
         ) : (
           <>
             <p className="text-sm text-muted-foreground">
-              Create a private Linear OAuth app with this callback URL, then paste its Client ID. No
-              client secret is needed.
+              Create a private Linear OAuth app with this callback URL, then paste its Client ID and
+              Client secret.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Input
@@ -566,11 +572,16 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
         done={issuesChosen}
         locked={!connected}
         summary={[
-          selectedTeam?.name ?? teamId,
-          readyStateIds.map(stateName).join(", "),
+          selectedTeam?.name ?? (teamId ? "Saved team" : "No team selected"),
+          selectedTeam
+            ? readyStateIds.map(stateName).join(", ")
+            : `${readyStateIds.length} saved statuses`,
           triggerLabelIds.length > 0
             ? triggerLabelIds
-                .map((id) => selectedTeam?.labels.find((label) => label.id === id)?.name ?? id)
+                .map(
+                  (id) =>
+                    selectedTeam?.labels.find((label) => label.id === id)?.name ?? "Saved label",
+                )
                 .join(", ")
             : "any label",
         ].join(" · ")}
@@ -596,7 +607,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           >
             <option value="">Select a team…</option>
             {teamId && !catalog?.teams.some((team) => team.id === teamId) ? (
-              <option value={teamId}>{teamId} (saved value)</option>
+              <option value={teamId}>Saved team (reconnect to load name)</option>
             ) : null}
             {catalog?.teams.map((team) => (
               <option key={team.id} value={team.id}>
@@ -650,8 +661,9 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
           .map(([linearProjectId, projectId]) => {
             const source =
               selectedTeam?.projects.find((project) => project.id === linearProjectId)?.name ??
-              linearProjectId;
-            const target = projects.find((project) => project.id === projectId)?.title ?? projectId;
+              "Saved Linear project";
+            const target =
+              projects.find((project) => project.id === projectId)?.title ?? "Saved T3 project";
             return `${source} → ${target}`;
           })
           .join(" · ")}
@@ -673,7 +685,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                 className="grid items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.4fr)]"
               >
                 <span className={cn("truncate", !mappedProjectId && "text-muted-foreground")}>
-                  {linearProject?.name ?? `${linearProjectId} (saved mapping)`}
+                  {linearProject?.name ?? "Saved Linear project"}
                 </span>
                 <span aria-hidden className="hidden text-muted-foreground sm:block">
                   →
@@ -703,7 +715,7 @@ function LinearAutopilotSettingsForm({ settings }: { readonly settings: LinearAu
                   >
                     <option value="">Ignore</option>
                     {mappedProjectId && !mappedProject ? (
-                      <option value={mappedProjectId}>{mappedProjectId} (saved value)</option>
+                      <option value={mappedProjectId}>Saved T3 project</option>
                     ) : null}
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>

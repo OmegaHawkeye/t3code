@@ -94,6 +94,7 @@ import {
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+import { appName } from "@t3tools/client-runtime/branding";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -1001,7 +1002,7 @@ export function PreviewView({
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="max-w-sm text-sm text-muted-foreground">
-                This tab is open in the T3 Code desktop app.
+                This tab is open in the {appName()} desktop app.
               </p>
             </div>
           )

@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { Argument, Command, Flag } from "effect/cli";
 import {
+  resolveFlavorWebIconOverrides,
   resolveWebAssetBrandForChannel,
   resolveWebIconOverrides,
   WEB_ASSET_CHANNELS,
@@ -23,13 +24,19 @@ const WEB_ASSET_BRANDS = [
 export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (
   brand: WebAssetBrand,
   targetDirectory: string,
+  flavorId?: string | null,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
 
+  const resolvedTarget = path.resolve(repoRoot, targetDirectory);
+  const overrides =
+    resolveFlavorWebIconOverrides(flavorId, resolvedTarget) ??
+    resolveWebIconOverrides(brand, resolvedTarget);
+
   yield* Effect.forEach(
-    resolveWebIconOverrides(brand, path.resolve(repoRoot, targetDirectory)),
+    overrides,
     (override) =>
       fs.copyFile(path.join(repoRoot, override.sourceRelativePath), override.targetRelativePath),
     { concurrency: "unbounded" },

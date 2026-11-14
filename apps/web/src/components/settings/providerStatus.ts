@@ -3,6 +3,7 @@ import type {
   ServerProviderVersionAdvisory,
   ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
+import { appName } from "@t3tools/client-runtime/branding";
 
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
@@ -55,7 +56,8 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     return {
       headline: "Disabled",
       detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
+        provider.message ??
+        `This provider is installed but disabled for new sessions in ${appName()}.`,
     };
   }
   if (!provider.installed) {

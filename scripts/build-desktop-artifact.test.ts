@@ -548,7 +548,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("gives a flavor build its own identity and never bakes in an update feed", () =>
+  it.effect("gives a flavor build its own identity and its own update feed, never upstream's", () =>
     Effect.gen(function* () {
       const flavored = yield* createBuildConfig(
         "mac",
@@ -566,7 +566,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(flavored.appId, "com.omegahawkeye.tiphys");
       assert.equal(flavored.productName, "Tiphys");
       assert.equal(flavored.artifactName, "Tiphys-${version}-${arch}.${ext}");
-      assert.isNull(flavored.publish);
+      // The flavor feed is pinned to its own repo, so upstream env feeds never leak in.
+      assert.deepEqual(flavored.publish, [
+        { provider: "github", owner: "OmegaHawkeye", repo: "Tiphys", releaseType: "release" },
+      ]);
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(

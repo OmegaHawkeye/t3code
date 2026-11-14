@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./branding": {
+      "types": "./src/branding.ts",
+      "default": "./src/branding.ts"
+    },
     "./assembly-highlighting": {
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"
